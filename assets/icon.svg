@@ -1,0 +1,57 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 主渐变：代表多个 AI 的融合 -->
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="50%" stop-color="#615CED"/>
+      <stop offset="100%" stop-color="#D97757"/>
+    </linearGradient>
+    <!-- 背景渐变 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <!-- 聊天气泡渐变 -->
+    <linearGradient id="bubbleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4facfe"/>
+      <stop offset="100%" stop-color="#00f2fe"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆形背景 -->
+  <circle cx="512" cy="512" r="480" fill="url(#bgGradient)"/>
+
+  <!-- 外圈光环 -->
+  <circle cx="512" cy="512" r="440" fill="none" stroke="url(#mainGradient)" stroke-width="8" opacity="0.6"/>
+
+  <!-- 聊天气泡形状 -->
+  <path d="M256 320
+           C256 249 313 192 384 192
+           L640 192
+           C711 192 768 249 768 320
+           L768 544
+           C768 615 711 672 640 672
+           L480 672
+           L352 800
+           L352 672
+           L384 672
+           C313 672 256 615 256 544
+           Z"
+        fill="url(#mainGradient)"
+        opacity="0.95"/>
+
+  <!-- K 字母 -->
+  <g fill="#FFFFFF">
+    <!-- K 的竖线 -->
+    <rect x="360" y="280" width="64" height="320" rx="12"/>
+    <!-- K 的斜线上半部分 -->
+    <path d="M424 432 L560 280 L624 280 C640 280 648 300 636 316 L504 464 L424 432 Z"/>
+    <!-- K 的斜线下半部分 -->
+    <path d="M424 480 L636 620 C648 632 640 656 620 656 L556 656 L424 520 Z"/>
+  </g>
+
+  <!-- 装饰点：代表多个 AI -->
+  <circle cx="680" cy="260" r="24" fill="#00D4AA"/>
+  <circle cx="740" cy="320" r="18" fill="#4F8CFF"/>
+  <circle cx="780" cy="400" r="14" fill="#D97757"/>
+</svg>

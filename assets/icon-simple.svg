@@ -1,0 +1,28 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 主渐变 -->
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="35%" stop-color="#4F8CFF"/>
+      <stop offset="70%" stop-color="#615CED"/>
+      <stop offset="100%" stop-color="#D97757"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形背景 -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#grad1)"/>
+
+  <!-- K 字母（白色） -->
+  <g fill="#FFFFFF">
+    <!-- 竖线 -->
+    <rect x="296" y="240" width="100" height="544" rx="20"/>
+    <!-- 斜线上 -->
+    <path d="M396 480 L620 240 L740 240 Q780 240 760 280 L540 520 Z" />
+    <!-- 斜线下 -->
+    <path d="M396 560 L760 780 Q780 800 740 800 L620 800 L396 600 Z" />
+  </g>
+
+  <!-- 聊天气泡装饰 -->
+  <circle cx="760" cy="300" r="48" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="760" cy="300" r="24" fill="url(#grad1)"/>
+</svg>

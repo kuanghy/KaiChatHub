@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';">
+  <title>AI Chat Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #0f0f14;
+      --bg-secondary: #16161d;
+      --bg-tertiary: #1e1e28;
+      --accent-yuanbao: #00d4aa;
+      --accent-yiyan: #4f8cff;
+      --accent-chatgpt: #10a37f;
+      --accent-gemini: #8e75ff;
+      --accent-settings: #ff9f43;
+      --text-primary: #f0f0f5;
+      --text-secondary: #8a8a9a;
+      --border-color: #2a2a38;
+      --sidebar-width: 72px;
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    body {
+      font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    .app-container {
+      display: flex;
+      height: 100vh;
+      background: linear-gradient(135deg, var(--bg-primary) 0%, #12121a 100%);
+    }
+
+    /* 侧边栏 */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 60px 0 20px;
+      -webkit-app-region: drag;
+      position: relative;
+      z-index: 100;
+    }
+
+    .sidebar::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
+      pointer-events: none;
+    }
+
+    .nav-items {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+
+    .nav-item {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+      position: relative;
+      background: transparent;
+      border: none;
+      outline: none;
+    }
+
+    .nav-item::before {
+      content: '';
+      position: absolute;
+      left: -12px;
+      width: 4px;
+      height: 0;
+      background: currentColor;
+      border-radius: 0 2px 2px 0;
+      transition: var(--transition);
+    }
+
+    .nav-item:hover {
+      background: var(--bg-tertiary);
+      transform: scale(1.05);
+    }
+
+    .nav-item.active::before {
+      height: 24px;
+    }
+
+    .nav-item.active {
+      background: var(--bg-tertiary);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .nav-item svg {
+      width: 26px;
+      height: 26px;
+      transition: var(--transition);
+    }
+
+    /* 各 AI 的颜色 */
+    .nav-item[data-tab="yuanbao"] { color: var(--accent-yuanbao); }
+    .nav-item[data-tab="yiyan"] { color: var(--accent-yiyan); }
+    .nav-item[data-tab="chatgpt"] { color: var(--accent-chatgpt); }
+    .nav-item[data-tab="gemini"] { color: var(--accent-gemini); }
+
+    .nav-item[data-tab="yuanbao"]:hover,
+    .nav-item[data-tab="yuanbao"].active {
+      background: rgba(0, 212, 170, 0.15);
+    }
+    .nav-item[data-tab="yiyan"]:hover,
+    .nav-item[data-tab="yiyan"].active {
+      background: rgba(79, 140, 255, 0.15);
+    }
+    .nav-item[data-tab="chatgpt"]:hover,
+    .nav-item[data-tab="chatgpt"].active {
+      background: rgba(16, 163, 127, 0.15);
+    }
+    .nav-item[data-tab="gemini"]:hover,
+    .nav-item[data-tab="gemini"].active {
+      background: rgba(142, 117, 255, 0.15);
+    }
+
+    /* 工具提示 */
+    .nav-item .tooltip {
+      position: absolute;
+      left: 60px;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateX(-10px);
+      transition: var(--transition);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-color);
+      z-index: 1000;
+    }
+
+    .nav-item:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(0);
+    }
+
+    /* 主内容区 */
+    .main-content {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .webview-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease;
+    }
+
+    .webview-container.active {
+      opacity: 1;
+      visibility: visible;
+      z-index: 1;
+    }
+
+    webview {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* 加载状态 */
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      transition: opacity 0.3s ease;
+    }
+
+    .loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid var(--border-color);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .loading-text {
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* 底部工具栏 */
+    .sidebar-footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      -webkit-app-region: no-drag;
+    }
+
+    /* 设置按钮 */
+    .settings-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition);
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-secondary);
+    }
+
+    .settings-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--accent-settings);
+      transform: rotate(30deg);
+    }
+
+    .settings-btn svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    /* 品牌标识 */
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent-yuanbao), var(--accent-gemini));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: default;
+      transition: var(--transition);
+    }
+
+    .brand-icon:hover {
+      transform: rotate(10deg) scale(1.1);
+    }
+
+    /* 设置面板 */
+    .settings-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: var(--transition);
+    }
+
+    .settings-overlay.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .settings-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      width: 480px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow: hidden;
+      transform: scale(0.9) translateY(20px);
+      transition: var(--transition);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .settings-overlay.active .settings-panel {
+      transform: scale(1) translateY(0);
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .settings-title {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .settings-title svg {
+      width: 22px;
+      height: 22px;
+      color: var(--accent-settings);
+    }
+
+    .close-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .close-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .close-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .settings-body {
+      padding: 24px;
+    }
+
+    .settings-section {
+      margin-bottom: 24px;
+    }
+
+    .settings-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      transition: var(--transition);
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--accent-settings);
+      box-shadow: 0 0 0 3px rgba(255, 159, 67, 0.15);
+    }
+
+    .form-input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    .form-hint {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    /* 开关样式 */
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 48px;
+      height: 26px;
+      background: var(--border-color);
+      border-radius: 13px;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .toggle-switch.active {
+      background: var(--accent-settings);
+    }
+
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: var(--transition);
+    }
+
+    .toggle-switch.active::after {
+      transform: translateX(22px);
+    }
+
+    /* 按钮 */
+    .btn-group {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: var(--accent-settings);
+      border: none;
+      color: #000;
+    }
+
+    .btn-primary:hover {
+      background: #ffb366;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--text-secondary);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* 测试结果 */
+    .test-result {
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .test-result.show {
+      display: flex;
+    }
+
+    .test-result.success {
+      background: rgba(0, 212, 170, 0.15);
+      color: var(--accent-yuanbao);
+    }
+
+    .test-result.error {
+      background: rgba(255, 99, 99, 0.15);
+      color: #ff6363;
+    }
+
+    .test-result svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* 代理状态指示器 */
+    .proxy-indicator {
+      position: absolute;
+      bottom: 4px;
+      right: 4px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .proxy-indicator.active {
+      background: var(--accent-yuanbao);
+      box-shadow: 0 0 8px var(--accent-yuanbao);
+    }
+
+    /* 动画入场 */
+    .sidebar {
+      animation: slideIn 0.4s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .nav-item {
+      animation: fadeIn 0.4s ease-out backwards;
+    }
+
+    .nav-item:nth-child(1) { animation-delay: 0.1s; }
+    .nav-item:nth-child(2) { animation-delay: 0.15s; }
+    .nav-item:nth-child(3) { animation-delay: 0.2s; }
+    .nav-item:nth-child(4) { animation-delay: 0.25s; }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.8);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <aside class="sidebar">
+      <nav class="nav-items">
+        <button class="nav-item active" data-tab="yuanbao" title="腾讯元宝">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+          </svg>
+          <span class="tooltip">腾讯元宝</span>
+        </button>
+        <button class="nav-item" data-tab="yiyan" title="文心一言">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+            <path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/>
+          </svg>
+          <span class="tooltip">文心一言</span>
+        </button>
+        <button class="nav-item" data-tab="chatgpt" title="ChatGPT">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364l2.0201-1.1685a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.4043-.6813zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/>
+          </svg>
+          <span class="tooltip">ChatGPT</span>
+        </button>
+        <button class="nav-item" data-tab="gemini" title="Google Gemini">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.352 0 0 5.352 0 12s5.352 12 12 12 12-5.352 12-12S18.648 0 12 0zm0 22.5C6.201 22.5 1.5 17.799 1.5 12S6.201 1.5 12 1.5 22.5 6.201 22.5 12 17.799 22.5 12 22.5z"/>
+            <path d="M12 6a6 6 0 100 12 6 6 0 000-12zm0 10.5a4.5 4.5 0 110-9 4.5 4.5 0 010 9z"/>
+            <circle cx="12" cy="12" r="2.5"/>
+          </svg>
+          <span class="tooltip">Google Gemini</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="settings-btn" id="settingsBtn" title="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <div class="proxy-indicator" id="proxyIndicator"></div>
+        </button>
+        <div class="brand-icon">H</div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <!-- 腾讯元宝 -->
+      <div class="webview-container active" data-tab="yuanbao">
+        <div class="loading-overlay" style="color: var(--accent-yuanbao);">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">正在加载腾讯元宝...</div>
+        </div>
+        <webview id="webview-yuanbao" src="https://yuanbao.tencent.com/" partition="persist:yuanbao" allowpopups></webview>
+      </div>
+
+      <!-- 文心一言 -->
+      <div class="webview-container" data-tab="yiyan">
+        <div class="loading-overlay" style="color: var(--accent-yiyan);">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">正在加载文心一言...</div>
+        </div>
+        <webview id="webview-yiyan" src="https://yiyan.baidu.com/" partition="persist:yiyan" allowpopups></webview>
+      </div>
+
+      <!-- ChatGPT -->
+      <div class="webview-container" data-tab="chatgpt">
+        <div class="loading-overlay" style="color: var(--accent-chatgpt);">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">正在加载 ChatGPT...</div>
+        </div>
+        <webview id="webview-chatgpt" src="https://chatgpt.com/" partition="persist:chatgpt" allowpopups></webview>
+      </div>
+
+      <!-- Gemini -->
+      <div class="webview-container" data-tab="gemini">
+        <div class="loading-overlay" style="color: var(--accent-gemini);">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">正在加载 Google Gemini...</div>
+        </div>
+        <webview id="webview-gemini" src="https://gemini.google.com/" partition="persist:gemini" allowpopups></webview>
+      </div>
+    </main>
+  </div>
+
+  <!-- 设置面板 -->
+  <div class="settings-overlay" id="settingsOverlay">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <div class="settings-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          设置
+        </div>
+        <button class="close-btn" id="closeSettings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <div class="section-title">代理设置</div>
+
+          <div class="toggle-group">
+            <span class="toggle-label">启用代理</span>
+            <div class="toggle-switch" id="proxyToggle"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">代理服务器</label>
+            <input type="text" class="form-input" id="proxyServer" placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080">
+            <div class="form-hint">支持 HTTP、HTTPS、SOCKS4、SOCKS5 代理。<strong>仅 ChatGPT 和 Gemini 会使用代理</strong>，元宝和一言直连。</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">额外绕过代理的地址（可选）</label>
+            <input type="text" class="form-input" id="proxyBypass" placeholder="例如: *.example.com">
+            <div class="form-hint">多个地址用逗号分隔。国内网站已默认绕过。</div>
+          </div>
+
+          <div class="test-result" id="testResult">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="result-icon">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <span class="result-text"></span>
+          </div>
+
+          <div class="btn-group">
+            <button class="btn btn-secondary" id="testProxyBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+              </svg>
+              测试连接
+            </button>
+            <button class="btn btn-primary" id="saveProxyBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              保存设置
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const navItems = document.querySelectorAll('.nav-item');
+      const webviewContainers = document.querySelectorAll('.webview-container');
+      const webviews = document.querySelectorAll('webview');
+
+      // 设置相关元素
+      const settingsBtn = document.getElementById('settingsBtn');
+      const settingsOverlay = document.getElementById('settingsOverlay');
+      const closeSettings = document.getElementById('closeSettings');
+      const proxyToggle = document.getElementById('proxyToggle');
+      const proxyServer = document.getElementById('proxyServer');
+      const proxyBypass = document.getElementById('proxyBypass');
+      const testProxyBtn = document.getElementById('testProxyBtn');
+      const saveProxyBtn = document.getElementById('saveProxyBtn');
+      const testResult = document.getElementById('testResult');
+      const proxyIndicator = document.getElementById('proxyIndicator');
+
+      // 加载代理配置（非阻塞）
+      function loadProxyConfig() {
+        if (window.electronAPI && window.electronAPI.getProxyConfig) {
+          window.electronAPI.getProxyConfig().then(config => {
+            proxyToggle.classList.toggle('active', config.enabled);
+            proxyServer.value = config.server || '';
+            proxyBypass.value = config.bypass || '';
+            proxyIndicator.classList.toggle('active', config.enabled);
+          }).catch(error => {
+            console.error('Failed to load proxy config:', error);
+          });
+        }
+      }
+
+      // 延迟加载配置，不阻塞 UI
+      setTimeout(loadProxyConfig, 100);
+
+      // 切换标签
+      navItems.forEach(item => {
+        item.addEventListener('click', () => {
+          const tab = item.dataset.tab;
+
+          // 更新导航状态
+          navItems.forEach(nav => nav.classList.remove('active'));
+          item.classList.add('active');
+
+          // 切换 webview
+          webviewContainers.forEach(container => {
+            container.classList.toggle('active', container.dataset.tab === tab);
+          });
+        });
+      });
+
+      // 监听 webview 加载完成
+      webviews.forEach(webview => {
+        webview.addEventListener('did-finish-load', () => {
+          const container = webview.closest('.webview-container');
+          const overlay = container.querySelector('.loading-overlay');
+          if (overlay) {
+            overlay.classList.add('hidden');
+          }
+        });
+
+        webview.addEventListener('did-fail-load', (event) => {
+          const container = webview.closest('.webview-container');
+          const overlay = container.querySelector('.loading-overlay');
+          // -3 是用户取消，忽略
+          if (overlay && event.errorCode !== -3) {
+            const loadingText = overlay.querySelector('.loading-text');
+            loadingText.textContent = '加载失败，请检查网络连接或代理设置';
+            console.error('Load failed:', event.errorCode, event.errorDescription);
+          }
+        });
+
+        webview.addEventListener('did-start-loading', () => {
+          const container = webview.closest('.webview-container');
+          const overlay = container.querySelector('.loading-overlay');
+          if (overlay) {
+            overlay.classList.remove('hidden');
+          }
+        });
+
+        // 监听页面导航
+        webview.addEventListener('will-navigate', (event) => {
+          console.log('Navigating to:', event.url);
+        });
+
+        // 监听页面内跳转
+        webview.addEventListener('did-navigate-in-page', (event) => {
+          console.log('In-page navigation:', event.url);
+        });
+      });
+
+      // 键盘快捷键切换
+      document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '4') {
+          e.preventDefault();
+          const index = parseInt(e.key) - 1;
+          if (navItems[index]) {
+            navItems[index].click();
+          }
+        }
+        // ESC 关闭设置
+        if (e.key === 'Escape' && settingsOverlay.classList.contains('active')) {
+          settingsOverlay.classList.remove('active');
+        }
+      });
+
+      // 打开设置
+      settingsBtn.addEventListener('click', () => {
+        settingsOverlay.classList.add('active');
+        testResult.classList.remove('show');
+      });
+
+      // 关闭设置
+      closeSettings.addEventListener('click', () => {
+        settingsOverlay.classList.remove('active');
+      });
+
+      // 点击遮罩关闭
+      settingsOverlay.addEventListener('click', (e) => {
+        if (e.target === settingsOverlay) {
+          settingsOverlay.classList.remove('active');
+        }
+      });
+
+      // 切换代理开关
+      proxyToggle.addEventListener('click', () => {
+        proxyToggle.classList.toggle('active');
+      });
+
+      // 测试代理
+      testProxyBtn.addEventListener('click', async () => {
+        const config = {
+          enabled: proxyToggle.classList.contains('active'),
+          server: proxyServer.value.trim(),
+          bypass: proxyBypass.value.trim()
+        };
+
+        if (!config.server) {
+          showTestResult(false, '请输入代理服务器地址');
+          return;
+        }
+
+        testProxyBtn.disabled = true;
+        testProxyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+          </svg>
+          测试中...
+        `;
+
+        try {
+          const result = await window.electronAPI.testProxy(config);
+          showTestResult(result.success, result.message);
+        } catch (error) {
+          showTestResult(false, error.message);
+        }
+
+        testProxyBtn.disabled = false;
+        testProxyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+          </svg>
+          测试连接
+        `;
+      });
+
+      // 保存代理设置
+      saveProxyBtn.addEventListener('click', async () => {
+        const config = {
+          enabled: proxyToggle.classList.contains('active'),
+          server: proxyServer.value.trim(),
+          bypass: proxyBypass.value.trim()
+        };
+
+        saveProxyBtn.disabled = true;
+        saveProxyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+          </svg>
+          保存中...
+        `;
+
+        try {
+          await window.electronAPI.setProxyConfig(config);
+          proxyIndicator.classList.toggle('active', config.enabled);
+          showTestResult(true, '设置已保存，刷新页面后生效');
+
+          // 刷新所有 webview
+          webviews.forEach(webview => {
+            webview.reload();
+          });
+        } catch (error) {
+          showTestResult(false, '保存失败: ' + error.message);
+        }
+
+        saveProxyBtn.disabled = false;
+        saveProxyBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          保存设置
+        `;
+      });
+
+      // 显示测试结果
+      function showTestResult(success, message) {
+        testResult.classList.remove('success', 'error');
+        testResult.classList.add('show', success ? 'success' : 'error');
+
+        const icon = success
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+
+        testResult.innerHTML = icon + `<span>${message}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>
