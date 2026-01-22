@@ -2,6 +2,11 @@ const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu } = requi
 const path = require('path');
 const fs = require('fs');
 
+// 禁用自动化控制标识（必须在 app ready 之前设置）
+if (app && app.commandLine) {
+  app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+}
+
 let mainWindow;
 let browserViews = {};
 let currentTab = 'yuanbao';
@@ -9,13 +14,14 @@ let viewsHidden = false;
 
 // AI 模型配置
 const AI_TABS = {
-  yuanbao: { url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao' },
-  yiyan: { url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan' },
-  doubao: { url: 'https://www.doubao.com/', partition: 'persist:doubao' },
-  deepseek: { url: 'https://chat.deepseek.com/', partition: 'persist:deepseek' },
-  kimi: { url: 'https://www.kimi.com/', partition: 'persist:kimi' },
-  chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt' },
-  claude: { url: 'https://claude.ai/', partition: 'persist:claude' }
+  yuanbao: { url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao', useProxy: false },
+  yiyan: { url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan', useProxy: false },
+  doubao: { url: 'https://www.doubao.com/', partition: 'persist:doubao', useProxy: false },
+  deepseek: { url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false },
+  kimi: { url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false },
+  chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true },
+  gemini: { url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true },
+  claude: { url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true }
 };
 
 // 配置文件路径
@@ -23,7 +29,6 @@ const configPath = path.join(app.getPath('userData'), 'config.json');
 
 // Chrome User-Agent (使用最新版本)
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
 
 // 读取配置
 function loadConfig() {
@@ -48,8 +53,37 @@ function saveConfig(config) {
 }
 
 // 设置 session
-function setupSession(ses, useProxy = false, proxyConfig = null) {
-  ses.setUserAgent(USER_AGENT);
+function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
+  // 对于 Gemini，伪装成原生的 Safari 浏览器，这通常比 Chrome 伪装更易通过 Google 检测
+  const SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
+  const UA = (tabName === 'gemini') ? SAFARI_UA : USER_AGENT;
+  
+  ses.setUserAgent(UA);
+
+  // 深度清理请求头
+  if (tabName === 'gemini') {
+    ses.webRequest.onBeforeSendHeaders({ 
+      urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.googleusercontent.com/*'] 
+    }, (details, callback) => {
+      const { requestHeaders } = details;
+      
+      // 1. 删除 X-Requested-With (处理各种大小写)
+      Object.keys(requestHeaders).forEach(key => {
+        if (key.toLowerCase() === 'x-requested-with') {
+          delete requestHeaders[key];
+        }
+      });
+
+      // 2. 删除 sec-ch-ua 相关头部（这些头部会泄露真实的 Chromium 版本）
+      Object.keys(requestHeaders).forEach(key => {
+        if (key.toLowerCase().startsWith('sec-ch-ua')) {
+          delete requestHeaders[key];
+        }
+      });
+
+      callback({ requestHeaders });
+    });
+  }
 
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(true);
@@ -57,7 +91,7 @@ function setupSession(ses, useProxy = false, proxyConfig = null) {
 
   ses.setPermissionCheckHandler(() => true);
 
-  // 应用代理（仅对国外网站）
+  // 应用代理（针对国外网站）
   if (useProxy && proxyConfig && proxyConfig.enabled && proxyConfig.server) {
     ses.setProxy({
       proxyRules: proxyConfig.server,
@@ -72,16 +106,17 @@ function createBrowserView(tabName) {
   const ses = session.fromPartition(tabConfig.partition);
 
   const config = loadConfig();
-  const useProxy = (tabName === 'chatgpt' || tabName === 'claude');
-  setupSession(ses, useProxy, config.proxy);
+  setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
 
   const view = new BrowserView({
     webPreferences: {
       session: ses,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
-      backgroundThrottling: false
+      sandbox: true,
+      backgroundThrottling: false,
+      // 为 Gemini 添加特殊的注入脚本
+      preload: (tabName === 'gemini') ? path.join(__dirname, 'preload-gemini.js') : undefined
     }
   });
 
@@ -146,10 +181,13 @@ function switchTab(tabName) {
     mainWindow.addBrowserView(browserViews[tabName]);
   }
 
-  // 将所有 view 移到屏幕外
+  // 管理 View 状态：静音后台 View，显示当前 View
   Object.entries(browserViews).forEach(([name, view]) => {
     if (name !== tabName) {
       view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
+      view.webContents.setAudioMuted(true);
+    } else {
+      view.webContents.setAudioMuted(false);
     }
   });
 
@@ -171,12 +209,29 @@ function switchTab(tabName) {
   // 确保 view 获得焦点，并触发页面可见性恢复
   browserViews[tabName].webContents.focus();
 
-  // 模拟点击页面以恢复输入状态
+  // 模拟点击页面并尝试聚焦到输入框
   browserViews[tabName].webContents.executeJavaScript(`
-    document.body.click();
-    // 尝试聚焦到输入框
-    const input = document.querySelector('textarea, input[type="text"], [contenteditable="true"]');
-    if (input) input.focus();
+    (function() {
+      document.body.click();
+      // 针对常见 AI 网站的输入框选择器
+      const selectors = [
+        'textarea[placeholder*="消息"]',
+        'textarea[placeholder*="Send"]',
+        'textarea[placeholder*="问我"]',
+        '#prompt-textarea',
+        '.ProseMirror',
+        'textarea',
+        'input[type="text"]',
+        '[contenteditable="true"]'
+      ];
+      for (const s of selectors) {
+        const el = document.querySelector(s);
+        if (el && el.getBoundingClientRect().height > 0) {
+          el.focus();
+          break;
+        }
+      }
+    })();
   `).catch(() => {});
 }
 
@@ -451,9 +506,8 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
   saveConfig(config);
 
   // 重新设置国外网站的代理
-  ['chatgpt', 'claude'].forEach(tabName => {
-    const tabConfig = AI_TABS[tabName];
-    if (tabConfig) {
+  Object.entries(AI_TABS).forEach(([tabName, tabConfig]) => {
+    if (tabConfig.useProxy) {
       const ses = session.fromPartition(tabConfig.partition);
       if (proxyConfig.enabled && proxyConfig.server) {
         ses.setProxy({

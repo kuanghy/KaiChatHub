@@ -8,9 +8,9 @@
 |------|---------|------|------|
 | 1 | 🟢 **腾讯元宝** | https://yuanbao.tencent.com/ | ❌ |
 | 2 | 🔵 **文心一言** | https://yiyan.baidu.com/ | ❌ |
-| 3 | 🟣 **阿里千问** | https://www.qianwen.com/ | ❌ |
-| 4 | 🩵 **字节豆包** | https://www.doubao.com/ | ❌ |
-| 5 | 🔷 **深度求索** | https://www.deepseek.com/ | ❌ |
+| 3 | 🩵 **字节豆包** | https://www.doubao.com/ | ❌ |
+| 4 | 🔷 **深度求索** | https://chat.deepseek.com/ | ❌ |
+| 5 | 🌙 **月之暗面 Kimi** | https://www.kimi.com/ | ❌ |
 | 6 | 🌿 **ChatGPT** | https://chatgpt.com/ | ✅ |
 | 7 | ✨ **Google Gemini** | https://gemini.google.com/ | ✅ |
 | 8 | 🧡 **Claude** | https://claude.ai/ | ✅ |
@@ -44,14 +44,9 @@ npm run build:linux
 
 ## 快捷键
 
-- `Cmd/Ctrl + 1` - 腾讯元宝
-- `Cmd/Ctrl + 2` - 文心一言
-- `Cmd/Ctrl + 3` - 阿里千问
-- `Cmd/Ctrl + 4` - 字节豆包
-- `Cmd/Ctrl + 5` - 深度求索
-- `Cmd/Ctrl + 6` - ChatGPT
-- `Cmd/Ctrl + 7` - Google Gemini
-- `Cmd/Ctrl + 8` - Claude
+- `Cmd/Ctrl + R` - 刷新当前页面
+- `Cmd/Ctrl + Shift + I` - 打开开发者工具
+- `Escape` - 关闭设置面板
 
 ## 特性
 
