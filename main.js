@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -167,6 +167,17 @@ function switchTab(tabName) {
     width: width - 72,
     height: height
   });
+
+  // 确保 view 获得焦点，并触发页面可见性恢复
+  browserViews[tabName].webContents.focus();
+
+  // 模拟点击页面以恢复输入状态
+  browserViews[tabName].webContents.executeJavaScript(`
+    document.body.click();
+    // 尝试聚焦到输入框
+    const input = document.querySelector('textarea, input[type="text"], [contenteditable="true"]');
+    if (input) input.focus();
+  `).catch(() => {});
 }
 
 function createWindow() {
@@ -196,7 +207,7 @@ function createWindow() {
 
   mainWindow.on('resize', updateViewBounds);
 
-  // 快捷键打开开发者工具 (Cmd+Shift+I)
+  // Cmd+Shift+I 打开开发者工具
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.meta && input.shift && input.key === 'i') {
       mainWindow.webContents.openDevTools();
@@ -224,7 +235,149 @@ function createWindow() {
   });
 }
 
+// 显示关于窗口
+function showAboutWindow() {
+  const pkg = require('./package.json');
+
+  const aboutWindow = new BrowserWindow({
+    width: 360,
+    height: 300,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: '关于 KaiChatHub',
+    parent: mainWindow,
+    modal: true,
+    show: false,
+    titleBarStyle: 'default',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  const aboutHTML = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          color: #f0f0f5;
+          height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+          text-align: center;
+          user-select: none;
+        }
+        .logo {
+          width: 72px;
+          height: 72px;
+          background: linear-gradient(135deg, #00d4aa, #4d6bfe);
+          border-radius: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 32px;
+          font-weight: 700;
+          margin-bottom: 16px;
+          box-shadow: 0 8px 24px rgba(0, 212, 170, 0.3);
+        }
+        .name { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+        .version { font-size: 14px; color: #8a8a9a; margin-bottom: 16px; }
+        .desc { font-size: 13px; color: #a0a0b0; line-height: 1.6; margin-bottom: 20px; }
+        .copyright { font-size: 11px; color: #6a6a7a; margin-bottom: 16px; }
+        .close-btn {
+          padding: 8px 32px;
+          background: rgba(255,255,255,0.1);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 8px;
+          color: #f0f0f5;
+          font-size: 14px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .close-btn:hover { background: rgba(255,255,255,0.2); }
+      </style>
+    </head>
+    <body>
+      <div class="logo">K</div>
+      <div class="name">KaiChatHub</div>
+      <div class="version">版本 ${pkg.version}</div>
+      <div class="desc">一站式 AI 大模型聊天应用<br>整合多个主流 AI 助手</div>
+      <div class="copyright">© 2026 KaiChatHub. MIT License.</div>
+      <button class="close-btn" onclick="window.close()">关闭</button>
+      <script>
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') window.close();
+        });
+      </script>
+    </body>
+    </html>
+  `;
+
+  aboutWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(aboutHTML));
+  aboutWindow.once('ready-to-show', () => aboutWindow.show());
+}
+
 app.whenReady().then(() => {
+  // 创建应用菜单（用于注册全局快捷键）
+  const template = [
+    {
+      label: 'KaiChatHub',
+      submenu: [
+        {
+          label: '关于 KaiChatHub',
+          click: () => showAboutWindow()
+        },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 KaiChatHub' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '显示全部' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 KaiChatHub' }
+      ]
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: '视图',
+      submenu: [
+        {
+          label: '刷新当前页面',
+          accelerator: 'CmdOrCtrl+R',
+          click: () => {
+            if (browserViews[currentTab]) {
+              browserViews[currentTab].webContents.reload();
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   createWindow();
 
   app.on('activate', () => {
@@ -249,7 +402,6 @@ ipcMain.on('switch-tab', (event, tabName) => {
 ipcMain.on('focus-view', () => {
   if (browserViews[currentTab]) {
     browserViews[currentTab].webContents.focus();
-    browserViews[currentTab].webContents.setIgnoreMenuShortcuts(true);
   }
 });
 
@@ -268,7 +420,7 @@ ipcMain.on('show-views', (event, show) => {
         height: height
       });
     } else {
-      // 将 view 移到屏幕外，而不是移除它（避免重新渲染）
+      // 将 view 移到屏幕外（避免遮挡设置面板）
       browserViews[currentTab].setBounds({
         x: -10000,
         y: -10000,

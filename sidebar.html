@@ -245,8 +245,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(4px);
+      background: rgba(15, 15, 20, 0.85);
+      backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -710,15 +710,11 @@
 
       // 快捷键 Cmd/Ctrl + 1-7
       document.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '7') {
-          e.preventDefault();
-          e.stopPropagation();
-          navItems[parseInt(e.key) - 1]?.click();
-        }
+        // Escape 关闭设置面板
         if (e.key === 'Escape' && settingsOverlay.classList.contains('active')) {
           closeSettingsPanel();
         }
-      }, true);
+      });
     });
   </script>
 </body>
