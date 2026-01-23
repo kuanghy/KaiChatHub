@@ -733,9 +733,8 @@
         testResult.textContent = msg;
       }
 
-      // 快捷键 Cmd/Ctrl + 1-7
+      // Escape 关闭设置面板
       document.addEventListener('keydown', (e) => {
-        // Escape 关闭设置面板
         if (e.key === 'Escape' && settingsOverlay.classList.contains('active')) {
           closeSettingsPanel();
         }
