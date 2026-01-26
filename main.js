@@ -57,16 +57,16 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   // 对于 Gemini，伪装成原生的 Safari 浏览器，这通常比 Chrome 伪装更易通过 Google 检测
   const SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
   const UA = (tabName === 'gemini') ? SAFARI_UA : USER_AGENT;
-  
+
   ses.setUserAgent(UA);
 
   // 深度清理请求头
   if (tabName === 'gemini') {
-    ses.webRequest.onBeforeSendHeaders({ 
-      urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.googleusercontent.com/*'] 
+    ses.webRequest.onBeforeSendHeaders({
+      urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.googleusercontent.com/*']
     }, (details, callback) => {
       const { requestHeaders } = details;
-      
+
       // 1. 删除 X-Requested-With (处理各种大小写)
       Object.keys(requestHeaders).forEach(key => {
         if (key.toLowerCase() === 'x-requested-with') {
@@ -100,6 +100,95 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   }
 }
 
+// Gemini 专用：注入回车修复脚本
+function injectGeminiScript(webContents) {
+  const script = `
+    (function() {
+      // 防止重复注入
+      if (window.__kaiChatHubInjected) return;
+      window.__kaiChatHubInjected = true;
+
+      // 1. 伪装成 Safari
+      try {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        delete window.chrome;
+        delete window.browser;
+        Object.defineProperty(navigator, 'plugins', { get: () => [] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
+        window.safari = { pushNotification: function() {} };
+      } catch(e) {}
+
+      // 2. 焦点与可见性修复
+      try {
+        document.hasFocus = function() { return true; };
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+      } catch(e) {}
+
+      // 3. 查找发送按钮的函数
+      function findSendButton() {
+        const selectors = [
+          'button[aria-label*="Send"]',
+          'button[aria-label*="发送"]',
+          'button[aria-label*="submit"]',
+          'button[aria-label*="Submit"]',
+          'button[data-tooltip*="Send"]',
+          '.send-button-container button',
+          'button.send-button'
+        ];
+        for (const selector of selectors) {
+          const btn = document.querySelector(selector);
+          if (btn && btn.offsetParent !== null) {
+            return btn;
+          }
+        }
+        // 兜底：遍历所有按钮
+        const allButtons = document.querySelectorAll('button');
+        for (const btn of allButtons) {
+          const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+          if ((ariaLabel.includes('send') || ariaLabel.includes('发送') || ariaLabel.includes('submit')) && btn.offsetParent !== null) {
+            return btn;
+          }
+        }
+        return null;
+      }
+
+      // 4. 回车提交修复
+      window.addEventListener('keydown', function(e) {
+        // 只拦截普通的 Enter（不处理 Shift+Enter 和输入法合成状态）
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          const activeEl = document.activeElement;
+
+          const isInput = activeEl && (
+            activeEl.getAttribute('contenteditable') === 'true' ||
+            activeEl.tagName === 'TEXTAREA' ||
+            activeEl.role === 'textbox'
+          );
+
+          if (isInput) {
+            const sendBtn = findSendButton();
+
+            if (sendBtn && !sendBtn.disabled) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+
+              // 触发 input 事件确保编辑器状态更新
+              activeEl.dispatchEvent(new Event('input', { bubbles: true }));
+
+              // 下一帧点击发送按钮
+              requestAnimationFrame(function() {
+                sendBtn.click();
+              });
+            }
+          }
+        }
+      }, true);
+    })();
+  `;
+
+  webContents.executeJavaScript(script).catch(() => {});
+}
+
 // 创建 BrowserView
 function createBrowserView(tabName) {
   const tabConfig = AI_TABS[tabName];
@@ -119,7 +208,6 @@ function createBrowserView(tabName) {
       preload: (tabName === 'gemini') ? path.join(__dirname, 'preload-gemini.js') : undefined
     }
   });
-
 
   // 监听加载事件
   view.webContents.on('did-start-loading', () => {
@@ -147,6 +235,17 @@ function createBrowserView(tabName) {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  // Gemini 专用：页面加载完成后注入回车修复脚本
+  if (tabName === 'gemini') {
+    view.webContents.on('did-finish-load', () => {
+      injectGeminiScript(view.webContents);
+    });
+    // 页面内导航也需要重新注入
+    view.webContents.on('did-navigate-in-page', () => {
+      injectGeminiScript(view.webContents);
+    });
+  }
 
   return view;
 }
@@ -209,20 +308,15 @@ function switchTab(tabName) {
   // 确保 view 获得焦点，并触发页面可见性恢复
   browserViews[tabName].webContents.focus();
 
-  // 模拟点击页面并尝试聚焦到输入框
+  // 尝试聚焦到输入框（所有页面通用）
   browserViews[tabName].webContents.executeJavaScript(`
     (function() {
-      document.body.click();
-      // 针对常见 AI 网站的输入框选择器
       const selectors = [
-        'textarea[placeholder*="消息"]',
-        'textarea[placeholder*="Send"]',
-        'textarea[placeholder*="问我"]',
         '#prompt-textarea',
-        '.ProseMirror',
         'textarea',
-        'input[type="text"]',
-        '[contenteditable="true"]'
+        '[contenteditable="true"]',
+        '.ql-editor',
+        '.ProseMirror'
       ];
       for (const s of selectors) {
         const el = document.querySelector(s);
@@ -261,13 +355,6 @@ function createWindow() {
   });
 
   mainWindow.on('resize', updateViewBounds);
-
-  // Cmd+Shift+I 打开开发者工具
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.meta && input.shift && input.key === 'i') {
-      mainWindow.webContents.openDevTools();
-    }
-  });
 
   // 当主窗口获得焦点时，确保当前 BrowserView 也获得焦点
   mainWindow.on('focus', () => {
