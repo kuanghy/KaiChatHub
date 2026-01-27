@@ -699,6 +699,8 @@
 
       proxyToggle.addEventListener('click', () => proxyToggle.classList.toggle('active'));
 
+      let resultTimeout = null;  // 用于跟踪 showResult 的 timeout
+
       // 测试代理
       testProxyBtn.addEventListener('click', async () => {
         if (!window.electronAPI) return;
@@ -710,10 +712,18 @@
           showResult(false, '请输入代理地址');
           return;
         }
+        // 禁用按钮防止重复点击
+        testProxyBtn.disabled = true;
         testProxyBtn.textContent = '测试中...';
-        const result = await window.electronAPI.testProxy(config);
-        showResult(result.success, result.message);
-        testProxyBtn.textContent = '测试连接';
+        try {
+          const result = await window.electronAPI.testProxy(config);
+          showResult(result.success, result.message);
+        } catch (err) {
+          showResult(false, '测试失败: ' + err.message);
+        } finally {
+          testProxyBtn.disabled = false;
+          testProxyBtn.textContent = '测试连接';
+        }
       });
 
       // 保存代理
@@ -723,14 +733,31 @@
           enabled: proxyToggle.classList.contains('active'),
           server: proxyServer.value.trim()
         };
-        await window.electronAPI.setProxyConfig(config);
-        proxyIndicator.classList.toggle('active', config.enabled);
-        showResult(true, '已保存');
+        // 禁用按钮防止重复点击
+        saveProxyBtn.disabled = true;
+        try {
+          await window.electronAPI.setProxyConfig(config);
+          proxyIndicator.classList.toggle('active', config.enabled);
+          showResult(true, '已保存');
+        } catch (err) {
+          showResult(false, '保存失败: ' + err.message);
+        } finally {
+          saveProxyBtn.disabled = false;
+        }
       });
 
       function showResult(success, msg) {
+        // 清除之前的 timeout，避免累积
+        if (resultTimeout) {
+          clearTimeout(resultTimeout);
+        }
         testResult.className = 'test-result show ' + (success ? 'success' : 'error');
         testResult.textContent = msg;
+        // 3秒后自动隐藏结果
+        resultTimeout = setTimeout(() => {
+          testResult.classList.remove('show');
+          resultTimeout = null;
+        }, 3000);
       }
 
       // Escape 关闭设置面板

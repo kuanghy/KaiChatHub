@@ -60,23 +60,33 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
 
   ses.setUserAgent(UA);
 
-  // 深度清理请求头
+  // Gemini 专用：深度清理请求头（针对 Google 域名）
   if (tabName === 'gemini') {
     ses.webRequest.onBeforeSendHeaders({
       urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.googleusercontent.com/*']
     }, (details, callback) => {
       const { requestHeaders } = details;
 
-      // 1. 删除 X-Requested-With (处理各种大小写)
+      // 删除暴露 Electron 特征的头部
       Object.keys(requestHeaders).forEach(key => {
-        if (key.toLowerCase() === 'x-requested-with') {
+        const lowerKey = key.toLowerCase();
+        // 1. 删除 X-Requested-With
+        // 2. 删除 sec-ch-ua 相关头部（会泄露真实的 Chromium 版本）
+        if (lowerKey === 'x-requested-with' || lowerKey.startsWith('sec-ch-ua')) {
           delete requestHeaders[key];
         }
       });
 
-      // 2. 删除 sec-ch-ua 相关头部（这些头部会泄露真实的 Chromium 版本）
+      callback({ requestHeaders });
+    });
+  } else {
+    // 其他页面：清理所有请求头中的 Electron 特征
+    ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
+      const { requestHeaders } = details;
+
       Object.keys(requestHeaders).forEach(key => {
-        if (key.toLowerCase().startsWith('sec-ch-ua')) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === 'x-requested-with' || lowerKey.startsWith('sec-ch-ua')) {
           delete requestHeaders[key];
         }
       });
@@ -100,32 +110,215 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   }
 }
 
-// Gemini 专用：注入回车修复脚本
+// 通用反检测脚本（应用于所有页面）
+function injectAntiDetectionScript(webContents) {
+  const script = `
+    (function() {
+      // 防止重复注入（使用 Symbol 避免被检测）
+      const marker = Symbol.for('_k_ad_');
+      if (window[marker]) return;
+      window[marker] = true;
+
+      // 1. 隐藏 webdriver 特征
+      try {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 2. 删除 Electron/Chrome 自动化相关属性
+      try {
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+      } catch(e) {}
+
+      // 3. 伪装 plugins 和 mimeTypes
+      try {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => {
+            const plugins = [
+              { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+              { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+              { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+            ];
+            plugins.item = (i) => plugins[i];
+            plugins.namedItem = (name) => plugins.find(p => p.name === name);
+            plugins.refresh = () => {};
+            return plugins;
+          },
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 4. 设置正常的 languages
+      try {
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 5. 隐藏 Electron 特征
+      try {
+        if (window.chrome) {
+          window.chrome.runtime = {
+            connect: () => {},
+            sendMessage: () => {},
+            onMessage: { addListener: () => {} }
+          };
+        }
+      } catch(e) {}
+
+      // 6. 伪装 permissions API
+      try {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (parameters) => (
+          parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      } catch(e) {}
+
+      // 7. 修复 iframe contentWindow 检测
+      try {
+        const originalFunction = HTMLIFrameElement.prototype.__lookupGetter__('contentWindow');
+        if (originalFunction) {
+          Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+            get: function() {
+              return originalFunction.call(this);
+            }
+          });
+        }
+      } catch(e) {}
+
+      // 8. 设置正常的硬件并发数（固定值，避免每次访问返回不同值被检测）
+      try {
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+          get: () => 8,
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 9. 伪装 deviceMemory（某些网站会检测）
+      try {
+        Object.defineProperty(navigator, 'deviceMemory', {
+          get: () => 8,
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 10. 伪装 connection API
+      try {
+        if (navigator.connection) {
+          Object.defineProperty(navigator.connection, 'rtt', { get: () => 50, configurable: true });
+          Object.defineProperty(navigator.connection, 'downlink', { get: () => 10, configurable: true });
+          Object.defineProperty(navigator.connection, 'effectiveType', { get: () => '4g', configurable: true });
+        }
+      } catch(e) {}
+
+      // 11. 伪装 WebGL 渲染器信息（避免暴露 Electron）
+      try {
+        const getParameterProxyHandler = (originalFn) => function(parameter) {
+          // UNMASKED_VENDOR_WEBGL
+          if (parameter === 37445) {
+            return 'Intel Inc.';
+          }
+          // UNMASKED_RENDERER_WEBGL
+          if (parameter === 37446) {
+            return 'Intel Iris OpenGL Engine';
+          }
+          return originalFn.call(this, parameter);
+        };
+
+        // 处理 WebGL1
+        const getParameter1 = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = getParameterProxyHandler(getParameter1);
+
+        // 处理 WebGL2
+        if (typeof WebGL2RenderingContext !== 'undefined') {
+          const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
+          WebGL2RenderingContext.prototype.getParameter = getParameterProxyHandler(getParameter2);
+        }
+      } catch(e) {}
+
+    })();
+  `;
+
+  webContents.executeJavaScript(script).catch(() => {});
+}
+
+// Gemini 专用：注入 Safari 伪装和回车修复脚本
 function injectGeminiScript(webContents) {
   const script = `
     (function() {
-      // 防止重复注入
-      if (window.__kaiChatHubInjected) return;
-      window.__kaiChatHubInjected = true;
+      // 防止重复注入（使用 Symbol 避免被检测）
+      const marker = Symbol.for('_k_gm_');
+      if (window[marker]) return;
+      window[marker] = true;
 
-      // 1. 伪装成 Safari
+      // 1. 移除 Chromium 特有的 API（Safari 没有这些）
       try {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // userAgentData 是 Chromium 特有的，Safari 没有
+        if ('userAgentData' in navigator) {
+          Object.defineProperty(navigator, 'userAgentData', {
+            get: () => undefined,
+            configurable: true
+          });
+        }
+        // 删除 chrome 对象
         delete window.chrome;
         delete window.browser;
-        Object.defineProperty(navigator, 'plugins', { get: () => [] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
-        window.safari = { pushNotification: function() {} };
+        // 删除 Chromium 自动化相关属性
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
       } catch(e) {}
 
-      // 2. 焦点与可见性修复
+      // 2. 伪装成 Safari
+      try {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // Safari 的 plugins 是空的
+        Object.defineProperty(navigator, 'plugins', { 
+          get: () => {
+            const p = [];
+            p.item = () => null;
+            p.namedItem = () => null;
+            p.refresh = () => {};
+            return p;
+          }
+        });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh'] });
+        // Safari 的 vendor
+        Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
+        // 添加 Safari 特有对象
+        if (!window.safari) {
+          window.safari = {
+            pushNotification: {
+              permission: function() { return 'denied'; },
+              requestPermission: function() {}
+            }
+          };
+        }
+      } catch(e) {}
+
+      // 3. 移除 Chromium 特有的性能 API
+      try {
+        // Safari 没有 memory 属性
+        if (performance.memory) {
+          Object.defineProperty(performance, 'memory', { get: () => undefined });
+        }
+      } catch(e) {}
+
+      // 4. 焦点与可见性修复
       try {
         document.hasFocus = function() { return true; };
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
         Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
       } catch(e) {}
 
-      // 3. 查找发送按钮的函数
+      // 5. 查找发送按钮的函数
       function findSendButton() {
         const selectors = [
           'button[aria-label*="Send"]',
@@ -153,7 +346,7 @@ function injectGeminiScript(webContents) {
         return null;
       }
 
-      // 4. 回车提交修复
+      // 6. 回车提交修复
       window.addEventListener('keydown', function(e) {
         // 只拦截普通的 Enter（不处理 Shift+Enter 和输入法合成状态）
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -203,9 +396,7 @@ function createBrowserView(tabName) {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      backgroundThrottling: false,
-      // 为 Gemini 添加特殊的注入脚本
-      preload: (tabName === 'gemini') ? path.join(__dirname, 'preload-gemini.js') : undefined
+      backgroundThrottling: false
     }
   });
 
@@ -236,14 +427,25 @@ function createBrowserView(tabName) {
     return { action: 'deny' };
   });
 
-  // Gemini 专用：页面加载完成后注入回车修复脚本
+  // 注入反检测脚本
+  // Gemini 使用 Safari UA，需要使用专用脚本（伪装 Safari）
+  // 其他页面使用通用反检测脚本（伪装 Chrome）
   if (tabName === 'gemini') {
     view.webContents.on('did-finish-load', () => {
       injectGeminiScript(view.webContents);
     });
-    // 页面内导航也需要重新注入
     view.webContents.on('did-navigate-in-page', () => {
       injectGeminiScript(view.webContents);
+    });
+  } else {
+    view.webContents.on('dom-ready', () => {
+      injectAntiDetectionScript(view.webContents);
+    });
+    view.webContents.on('did-finish-load', () => {
+      injectAntiDetectionScript(view.webContents);
+    });
+    view.webContents.on('did-navigate-in-page', () => {
+      injectAntiDetectionScript(view.webContents);
     });
   }
 
@@ -270,7 +472,7 @@ function updateViewBounds() {
 
 // 切换标签
 function switchTab(tabName) {
-  if (!AI_TABS[tabName]) return;
+  if (!AI_TABS[tabName] || !mainWindow) return;
 
   currentTab = tabName;
 
@@ -551,25 +753,25 @@ ipcMain.on('focus-view', () => {
 ipcMain.on('show-views', (event, show) => {
   viewsHidden = !show;
 
-  if (browserViews[currentTab]) {
-    if (show) {
-      // 恢复到正常位置
-      const [width, height] = mainWindow.getContentSize();
-      browserViews[currentTab].setBounds({
-        x: 72,
-        y: 0,
-        width: width - 72,
-        height: height
-      });
-    } else {
-      // 将 view 移到屏幕外（避免遮挡设置面板）
-      browserViews[currentTab].setBounds({
-        x: -10000,
-        y: -10000,
-        width: 1,
-        height: 1
-      });
-    }
+  if (!mainWindow || !browserViews[currentTab]) return;
+
+  if (show) {
+    // 恢复到正常位置
+    const [width, height] = mainWindow.getContentSize();
+    browserViews[currentTab].setBounds({
+      x: 72,
+      y: 0,
+      width: width - 72,
+      height: height
+    });
+  } else {
+    // 将 view 移到屏幕外（避免遮挡设置面板）
+    browserViews[currentTab].setBounds({
+      x: -10000,
+      y: -10000,
+      width: 1,
+      height: 1
+    });
   }
 });
 
@@ -607,9 +809,11 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
     }
   });
 
-  // 刷新所有 view
-  Object.values(browserViews).forEach(view => {
-    view.webContents.reload();
+  // 只刷新使用代理的 view（国外站点）
+  Object.entries(browserViews).forEach(([tabName, view]) => {
+    if (AI_TABS[tabName] && AI_TABS[tabName].useProxy) {
+      view.webContents.reload();
+    }
   });
 
   return { success: true };
