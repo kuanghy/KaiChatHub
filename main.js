@@ -402,19 +402,19 @@ function createBrowserView(tabName) {
 
   // 监听加载事件
   view.webContents.on('did-start-loading', () => {
-    if (mainWindow && mainWindow.webContents) {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
       mainWindow.webContents.send('loading-status', { tab: tabName, loading: true });
     }
   });
 
   view.webContents.on('did-stop-loading', () => {
-    if (mainWindow && mainWindow.webContents) {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
       mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
     }
   });
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    if (mainWindow && mainWindow.webContents && errorCode !== -3) {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed() && errorCode !== -3) {
       mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: errorDescription });
     }
   });
@@ -432,20 +432,30 @@ function createBrowserView(tabName) {
   // 其他页面使用通用反检测脚本（伪装 Chrome）
   if (tabName === 'gemini') {
     view.webContents.on('did-finish-load', () => {
-      injectGeminiScript(view.webContents);
+      if (!view.webContents.isDestroyed()) {
+        injectGeminiScript(view.webContents);
+      }
     });
     view.webContents.on('did-navigate-in-page', () => {
-      injectGeminiScript(view.webContents);
+      if (!view.webContents.isDestroyed()) {
+        injectGeminiScript(view.webContents);
+      }
     });
   } else {
     view.webContents.on('dom-ready', () => {
-      injectAntiDetectionScript(view.webContents);
+      if (!view.webContents.isDestroyed()) {
+        injectAntiDetectionScript(view.webContents);
+      }
     });
     view.webContents.on('did-finish-load', () => {
-      injectAntiDetectionScript(view.webContents);
+      if (!view.webContents.isDestroyed()) {
+        injectAntiDetectionScript(view.webContents);
+      }
     });
     view.webContents.on('did-navigate-in-page', () => {
-      injectAntiDetectionScript(view.webContents);
+      if (!view.webContents.isDestroyed()) {
+        injectAntiDetectionScript(view.webContents);
+      }
     });
   }
 
@@ -560,7 +570,7 @@ function createWindow() {
 
   // 当主窗口获得焦点时，确保当前 BrowserView 也获得焦点
   mainWindow.on('focus', () => {
-    if (browserViews[currentTab]) {
+    if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
       browserViews[currentTab].webContents.focus();
     }
   });
@@ -708,7 +718,7 @@ app.whenReady().then(() => {
           label: '刷新当前页面',
           accelerator: 'CmdOrCtrl+R',
           click: () => {
-            if (browserViews[currentTab]) {
+            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
               browserViews[currentTab].webContents.reload();
             }
           }
@@ -744,7 +754,7 @@ ipcMain.on('switch-tab', (event, tabName) => {
 
 // IPC: 设置 BrowserView 焦点
 ipcMain.on('focus-view', () => {
-  if (browserViews[currentTab]) {
+  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
     browserViews[currentTab].webContents.focus();
   }
 });
@@ -753,7 +763,7 @@ ipcMain.on('focus-view', () => {
 ipcMain.on('show-views', (event, show) => {
   viewsHidden = !show;
 
-  if (!mainWindow || !browserViews[currentTab]) return;
+  if (!mainWindow || mainWindow.isDestroyed() || !browserViews[currentTab]) return;
 
   if (show) {
     // 恢复到正常位置
@@ -777,7 +787,7 @@ ipcMain.on('show-views', (event, show) => {
 
 // IPC: 刷新当前页面
 ipcMain.on('refresh-tab', () => {
-  if (browserViews[currentTab]) {
+  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
     browserViews[currentTab].webContents.reload();
   }
 });
