@@ -1,6 +1,6 @@
 {
   "name": "kaichathub",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "一站式 AI 大模型聊天应用，整合元宝、文心一言、豆包、DeepSeek、Kimi、ChatGPT、Gemini、Claude",
   "main": "main.js",
   "scripts": {

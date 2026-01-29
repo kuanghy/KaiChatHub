@@ -280,7 +280,7 @@ function injectGeminiScript(webContents) {
       try {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         // Safari 的 plugins 是空的
-        Object.defineProperty(navigator, 'plugins', { 
+        Object.defineProperty(navigator, 'plugins', {
           get: () => {
             const p = [];
             p.item = () => null;
@@ -580,8 +580,10 @@ function createWindow() {
     // 注入脚本监听侧边栏外的点击
     mainWindow.webContents.executeJavaScript(`
       document.addEventListener('mousedown', (e) => {
-        // 如果点击在侧边栏外，通知主进程设置焦点
-        if (e.clientX > 72) {
+        // 如果点击在侧边栏外，且设置面板未打开，通知主进程设置焦点
+        const settingsOverlay = document.getElementById('settingsOverlay');
+        const isSettingsOpen = settingsOverlay && settingsOverlay.classList.contains('active');
+        if (e.clientX > 72 && !isSettingsOpen) {
           window.electronAPI && window.electronAPI.focusView && window.electronAPI.focusView();
         }
       });
