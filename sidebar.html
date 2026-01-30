@@ -648,7 +648,8 @@
               if (data.error) {
                 loadingText.textContent = `加载失败: ${data.error}`;
                 loadingIndicator.classList.add('show');
-                setTimeout(() => loadingIndicator.classList.remove('show'), 3000);
+                // 延长错误显示时间，方便用户查看具体错误
+                setTimeout(() => loadingIndicator.classList.remove('show'), 5000);
               }
             }
           }

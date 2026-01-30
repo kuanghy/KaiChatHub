@@ -5,6 +5,9 @@ const fs = require('fs');
 // 禁用自动化控制标识（必须在 app ready 之前设置）
 if (app && app.commandLine) {
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+  // 禁用 HTTP/2（某些代理对 HTTP/2 支持不佳，可能导致国外站点连接中断）
+  // 注意：这是全局设置，会影响所有页面，但对国内站点影响很小
+  app.commandLine.appendSwitch('disable-http2');
 }
 
 let mainWindow;
@@ -311,14 +314,24 @@ function injectGeminiScript(webContents) {
         }
       } catch(e) {}
 
-      // 4. 焦点与可见性修复
+      // 4. 伪装 Permissions API（避免 Electron 默认返回异常值）
+      try {
+        const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (parameters) => (
+          parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      } catch(e) {}
+
+      // 5. 焦点与可见性修复
       try {
         document.hasFocus = function() { return true; };
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
         Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
       } catch(e) {}
 
-      // 5. 查找发送按钮的函数
+      // 6. 查找发送按钮的函数
       function findSendButton() {
         const selectors = [
           'button[aria-label*="Send"]',
@@ -346,7 +359,7 @@ function injectGeminiScript(webContents) {
         return null;
       }
 
-      // 6. 回车提交修复
+      // 7. 回车提交修复
       window.addEventListener('keydown', function(e) {
         // 只拦截普通的 Enter（不处理 Shift+Enter 和输入法合成状态）
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -376,6 +389,21 @@ function injectGeminiScript(webContents) {
           }
         }
       }, true);
+
+      // 8. 监控加载失败，尝试触发重绘恢复
+      document.addEventListener('DOMContentLoaded', () => {
+        let retryCount = 0;
+        const observer = new MutationObserver(() => {
+          // 检测页面是否有错误提示
+          const errorText = document.body.innerText;
+          if ((errorText.includes('失败') || errorText.includes('error') || errorText.includes('failed')) && retryCount < 2) {
+            retryCount++;
+            // 触发 resize 事件尝试恢复
+            window.dispatchEvent(new Event('resize'));
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
     })();
   `;
 
@@ -413,10 +441,62 @@ function createBrowserView(tabName) {
     }
   });
 
-  view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed() && errorCode !== -3) {
-      mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: errorDescription });
+  // 自动重连机制（仅对需要代理的页面生效，如 Gemini/ChatGPT/Claude）
+  let retryCount = 0;
+  const maxRetries = tabConfig.useProxy ? 2 : 0;
+
+  view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // 只处理主框架的加载失败
+    if (!isMainFrame) return;
+
+    // 网络相关错误码，对需要代理的页面尝试自动重连
+    const retryableErrors = [-2, -7, -21, -100, -101, -102, -105, -106, -118, -130, -137];
+
+    if (tabConfig.useProxy && retryableErrors.includes(errorCode) && retryCount < maxRetries) {
+      retryCount++;
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('loading-status', { tab: tabName, loading: true, error: null });
+      }
+      // 延迟 1.5 秒后重试
+      setTimeout(() => {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.reload();
+        }
+      }, 1500);
+      return;
     }
+
+    // 重置重试计数
+    retryCount = 0;
+
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed() && errorCode !== -3) {
+      // 常见错误码转换为友好提示（仅对代理页面显示详细信息）
+      if (tabConfig.useProxy) {
+        const errorMessages = {
+          '-2': '网络连接失败',
+          '-7': '连接超时',
+          '-21': '网络变化导致连接中断',
+          '-100': '连接被关闭',
+          '-101': '连接被重置',
+          '-102': '连接被拒绝',
+          '-105': 'DNS 解析失败',
+          '-106': '无网络连接',
+          '-118': '连接超时',
+          '-130': '代理连接失败',
+          '-137': 'SSL 协议错误',
+          '-138': '代理验证失败'
+        };
+        const errorMsg = errorMessages[String(errorCode)] || errorDescription;
+        mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: `${errorMsg} (${errorCode})` });
+      } else {
+        mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: errorDescription });
+      }
+    }
+  });
+
+  // 加载成功时重置重试计数
+  view.webContents.on('did-finish-load', () => {
+    retryCount = 0;
   });
 
   view.webContents.loadURL(tabConfig.url);
@@ -722,6 +802,16 @@ app.whenReady().then(() => {
           click: () => {
             if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
               browserViews[currentTab].webContents.reload();
+            }
+          }
+        },
+        { type: 'separator' },
+        {
+          label: '打开开发者工具',
+          accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => {
+            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+              browserViews[currentTab].webContents.openDevTools();
             }
           }
         },
