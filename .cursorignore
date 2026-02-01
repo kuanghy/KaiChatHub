@@ -1,0 +1,46 @@
+# ===========================================
+# Cursor AI 忽略配置
+# 这些文件/目录不会被 AI 索引和分析
+# ===========================================
+
+# 依赖目录 - 通常很大且无需 AI 分析
+node_modules/
+
+# 构建输出
+dist/
+out/
+
+# 锁文件 - 自动生成，无需 AI 关注
+package-lock.json
+
+# 日志文件
+*.log
+npm-debug.log*
+
+# 环境配置文件 - 可能包含敏感信息
+.env
+.env.*
+
+# Electron 缓存
+.electron/
+
+# 测试覆盖率报告
+coverage/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# 二进制和图片资源 - AI 无法有效分析
+*.icns
+*.ico
+*.png
+*.jpg
+*.jpeg
+*.gif
+# *.svg  # 允许查看 SVG 图标文件
+
+# 系统文件
+.DS_Store
+Thumbs.db
