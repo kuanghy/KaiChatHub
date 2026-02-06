@@ -22,6 +22,7 @@ const AI_TABS = {
   doubao: { url: 'https://www.doubao.com/', partition: 'persist:doubao', useProxy: false },
   deepseek: { url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false },
   kimi: { url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false },
+  qwen: { url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false },
   chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true },
   gemini: { url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true },
   claude: { url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true }
@@ -109,6 +110,24 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
     ses.setProxy({
       proxyRules: proxyConfig.server,
       proxyBypassRules: '<local>'
+    });
+  }
+
+  // 千问专用：移除安全限制头（包括 passport 的 iframe 嵌入限制）
+  // 千问和 passport 都需要移除 X-Frame-Options 等头，以支持 passport 登录 iframe 正常嵌入
+  if (tabName === 'qwen') {
+    ses.webRequest.onHeadersReceived((details, callback) => {
+      const responseHeaders = Object.assign({}, details.responseHeaders);
+      Object.keys(responseHeaders).forEach(key => {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === 'x-frame-options' ||
+            lowerKey === 'content-security-policy' ||
+            lowerKey === 'cross-origin-opener-policy' ||
+            lowerKey === 'cross-origin-embedder-policy') {
+          delete responseHeaders[key];
+        }
+      });
+      callback({ responseHeaders });
     });
   }
 }
@@ -418,13 +437,23 @@ function createBrowserView(tabName) {
   const config = loadConfig();
   setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
 
+  // 千问专用：使用 preload 脚本在页面代码执行前替换会导致崩溃的浏览器 API
+  // AWSC/Baxia 安全 SDK 在千问主页也会运行（不仅是登录页），需要同样的保护
+  // 安全说明：contextIsolation: false 使 preload 与页面共享 JS 世界，才能修改 window 全局对象
+  // 虽然 Electron 文档不推荐此组合，但此处 preload 是封闭 IIFE，不暴露 require 或 Node API，安全可控
+  const qwenPreload = tabName === 'qwen' ? {
+    contextIsolation: false,
+    preload: path.join(__dirname, 'preload-qwen.js')
+  } : {};
+
   const view = new BrowserView({
     webPreferences: {
       session: ses,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      ...qwenPreload
     }
   });
 
@@ -501,7 +530,24 @@ function createBrowserView(tabName) {
 
   view.webContents.loadURL(tabConfig.url);
 
-  // 处理新窗口：在外部浏览器打开
+  // 千问专用：阻止 passport iframe 中的 AWSC/Baxia 安全 SDK 脚本加载
+  // AWSC SDK 的音频指纹（ScriptProcessorNode）、WebGL 探测等操作会触发 Chromium 渲染进程崩溃
+  // 阻止 SDK 脚本加载后，passport 登录表单仍可正常渲染和提交，且能以原生 iframe 形式嵌入千问页面
+  // 仅阻止来自 passport 页面的 AWSC 请求（通过 referrer 判断），不影响千问主页的 AWSC
+  if (tabName === 'qwen') {
+    ses.webRequest.onBeforeRequest(
+      { urls: ['*://g.alicdn.com/AWSC/*', '*://g.alicdn.com/baxia*/*'] },
+      (details, callback) => {
+        if (details.referrer && details.referrer.includes('passport.qianwen.com')) {
+          callback({ cancel: true });
+          return;
+        }
+        callback({});
+      }
+    );
+  }
+
+  // 处理新窗口：统一在外部浏览器中打开
   view.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -539,25 +585,34 @@ function createBrowserView(tabName) {
     });
   }
 
+  // 千问专用：渲染进程崩溃时自动恢复，避免永久黑屏
+  if (tabName === 'qwen') {
+    view.webContents.on('render-process-gone', (event, details) => {
+      if (details.reason === 'crashed' || details.reason === 'killed') {
+        setTimeout(() => {
+          if (!view.webContents.isDestroyed()) {
+            view.webContents.reload();
+          }
+        }, 1000);
+      }
+    });
+  }
+
   return view;
 }
 
-// 更新 BrowserView 大小
+// 更新 BrowserView 大小（所有已创建的 view 同步更新，保证切换时尺寸一致）
 function updateViewBounds() {
   if (!mainWindow || viewsHidden) return;
 
   const [width, height] = mainWindow.getContentSize();
-  const sidebarWidth = 72;
+  const bounds = { x: 72, y: 0, width: width - 72, height: height };
 
-  // 只更新当前显示的 view
-  if (browserViews[currentTab]) {
-    browserViews[currentTab].setBounds({
-      x: sidebarWidth,
-      y: 0,
-      width: width - sidebarWidth,
-      height: height
-    });
-  }
+  Object.values(browserViews).forEach(view => {
+    if (!view.webContents.isDestroyed()) {
+      view.setBounds(bounds);
+    }
+  });
 }
 
 // 切换标签
@@ -572,53 +627,59 @@ function switchTab(tabName) {
     mainWindow.addBrowserView(browserViews[tabName]);
   }
 
-  // 管理 View 状态：静音后台 View，显示当前 View
-  Object.entries(browserViews).forEach(([name, view]) => {
-    if (name !== tabName) {
-      view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
-      view.webContents.setAudioMuted(true);
-    } else {
-      view.webContents.setAudioMuted(false);
-    }
-  });
+  // 对已加载的标签，立即通知 sidebar 隐藏加载指示器
+  // （sidebar 点击标签时总会显示 loading indicator，但已加载标签不会触发 did-stop-loading）
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
+  }
 
-  // 如果设置面板打开，也将当前 view 移到屏幕外
+  // 如果设置面板打开，将当前 view 移到屏幕外
   if (viewsHidden) {
     browserViews[tabName].setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
     return;
   }
 
-  // 显示当前 view
+  // 优先：置顶 + 确保尺寸正确，让切换立即生效
+  // 仅在尺寸不一致时调用 setBounds，避免触发不必要的 Chromium 重布局
   const [width, height] = mainWindow.getContentSize();
-  browserViews[tabName].setBounds({
-    x: 72,
-    y: 0,
-    width: width - 72,
-    height: height
-  });
-
-  // 确保 view 获得焦点，并触发页面可见性恢复
+  const cur = browserViews[tabName].getBounds();
+  if (cur.x !== 72 || cur.y !== 0 || cur.width !== width - 72 || cur.height !== height) {
+    browserViews[tabName].setBounds({ x: 72, y: 0, width: width - 72, height: height });
+  }
+  mainWindow.setTopBrowserView(browserViews[tabName]);
   browserViews[tabName].webContents.focus();
 
-  // 尝试聚焦到输入框（所有页面通用）
-  browserViews[tabName].webContents.executeJavaScript(`
-    (function() {
-      const selectors = [
-        '#prompt-textarea',
-        'textarea',
-        '[contenteditable="true"]',
-        '.ql-editor',
-        '.ProseMirror'
-      ];
-      for (const s of selectors) {
-        const el = document.querySelector(s);
-        if (el && el.getBoundingClientRect().height > 0) {
-          el.focus();
-          break;
-        }
+  // 非关键操作延后执行，不阻塞视图切换
+  setImmediate(() => {
+    // 静音后台 View，取消静音当前 View
+    Object.entries(browserViews).forEach(([name, view]) => {
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.setAudioMuted(name !== tabName);
       }
-    })();
-  `).catch(() => {});
+    });
+
+    // 尝试聚焦到输入框
+    if (!browserViews[tabName].webContents.isDestroyed()) {
+      browserViews[tabName].webContents.executeJavaScript(`
+        (function() {
+          const selectors = [
+            '#prompt-textarea',
+            'textarea',
+            '[contenteditable="true"]',
+            '.ql-editor',
+            '.ProseMirror'
+          ];
+          for (const s of selectors) {
+            const el = document.querySelector(s);
+            if (el && el.getBoundingClientRect().height > 0) {
+              el.focus();
+              break;
+            }
+          }
+        })();
+      `).catch(() => {});
+    }
+  });
 }
 
 function createWindow() {
@@ -852,27 +913,42 @@ ipcMain.on('focus-view', () => {
 });
 
 // IPC: 显示/隐藏 BrowserView（用于设置面板）
+// 使用 setTopBrowserView 方案后，所有已创建的 BrowserView 都保持全尺寸
+// 因此隐藏时需要移走所有 view，否则非活跃 view 仍会遮挡设置面板
+let restoreViewsTimer = null;
 ipcMain.on('show-views', (event, show) => {
   viewsHidden = !show;
 
-  if (!mainWindow || mainWindow.isDestroyed() || !browserViews[currentTab]) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
 
   if (show) {
-    // 恢复到正常位置
+    // 先恢复当前 view 并置顶（让用户立即看到内容）
     const [width, height] = mainWindow.getContentSize();
-    browserViews[currentTab].setBounds({
-      x: 72,
-      y: 0,
-      width: width - 72,
-      height: height
-    });
+    const bounds = { x: 72, y: 0, width: width - 72, height: height };
+    if (browserViews[currentTab]) {
+      browserViews[currentTab].setBounds(bounds);
+      mainWindow.setTopBrowserView(browserViews[currentTab]);
+    }
+    // 其他 view 延后恢复，避免多个 BrowserView 同时重绘导致 GPU 峰值
+    restoreViewsTimer = setTimeout(() => {
+      restoreViewsTimer = null;
+      Object.entries(browserViews).forEach(([name, view]) => {
+        if (name !== currentTab && !view.webContents.isDestroyed()) {
+          view.setBounds(bounds);
+        }
+      });
+    }, 300);
   } else {
-    // 将 view 移到屏幕外（避免遮挡设置面板）
-    browserViews[currentTab].setBounds({
-      x: -10000,
-      y: -10000,
-      width: 1,
-      height: 1
+    // 清除未完成的恢复定时器，防止设置面板快速开关时 view 意外恢复
+    if (restoreViewsTimer) {
+      clearTimeout(restoreViewsTimer);
+      restoreViewsTimer = null;
+    }
+    // 将所有 view 移到屏幕外（避免遮挡设置面板）
+    Object.values(browserViews).forEach(view => {
+      if (!view.webContents.isDestroyed()) {
+        view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
+      }
     });
   }
 });
@@ -924,7 +1000,7 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
 // IPC: 测试代理
 ipcMain.handle('test-proxy', async (event, proxyConfig) => {
   try {
-    const testSession = session.fromPartition('persist:test');
+    const testSession = session.fromPartition('test-proxy');
     if (proxyConfig.enabled && proxyConfig.server) {
       await testSession.setProxy({
         proxyRules: proxyConfig.server,
