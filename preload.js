@@ -23,5 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testProxy: (config) => ipcRenderer.invoke('test-proxy', config),
 
   // 设置 BrowserView 焦点
-  focusView: () => ipcRenderer.send('focus-view')
+  focusView: () => ipcRenderer.send('focus-view'),
+
+  // 获取标签页配置（全部标签 + 启用列表）
+  getTabConfig: () => ipcRenderer.invoke('get-tab-config'),
+
+  // 设置启用的标签页
+  setEnabledTabs: (tabs) => ipcRenderer.invoke('set-enabled-tabs', tabs)
 });

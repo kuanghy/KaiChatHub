@@ -281,6 +281,9 @@
       border-radius: 20px;
       width: 480px;
       max-width: 90vw;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
       transform: scale(0.9) translateY(20px);
       transition: var(--transition);
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -332,6 +335,8 @@
 
     .settings-body {
       padding: 24px;
+      overflow-y: auto;
+      flex: 1;
     }
 
     .section-title {
@@ -465,6 +470,86 @@
     .test-result.show { display: flex; align-items: center; gap: 8px; }
     .test-result.success { background: rgba(0, 212, 170, 0.15); color: var(--accent-yuanbao); }
     .test-result.error { background: rgba(255, 99, 99, 0.15); color: #ff6363; }
+
+    /* 页面管理 */
+    .tab-toggle-list {
+      background: var(--bg-tertiary);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .tab-toggle-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      transition: background 0.15s;
+    }
+
+    .tab-toggle-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tab-toggle-item + .tab-toggle-item {
+      border-top: 1px solid var(--border-color);
+    }
+
+    .tab-toggle-name {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .tab-toggle-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toggle-switch-sm {
+      width: 40px;
+      height: 22px;
+      background: var(--border-color);
+      border-radius: 11px;
+      cursor: pointer;
+      position: relative;
+      flex-shrink: 0;
+      transition: var(--transition);
+    }
+
+    .toggle-switch-sm.active {
+      background: var(--accent-settings);
+    }
+
+    .toggle-switch-sm.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .toggle-switch-sm::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      background: white;
+      border-radius: 50%;
+      transition: var(--transition);
+    }
+
+    .toggle-switch-sm.active::after {
+      transform: translateX(18px);
+    }
+
+    .section-divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 8px 0 24px;
+    }
   </style>
 </head>
 <body>
@@ -592,6 +677,10 @@
         </button>
       </div>
       <div class="settings-body">
+        <div class="section-title">页面管理</div>
+        <div class="tab-toggle-list" id="tabToggleList"></div>
+
+        <div class="section-divider"></div>
         <div class="section-title">代理设置</div>
 
         <div class="toggle-group">
@@ -637,6 +726,8 @@
       const loadingText = document.getElementById('loadingText');
 
       let currentTab = 'yuanbao';
+      let enabledTabs = [];
+      let allTabsConfig = [];
 
       const tabNames = {
         yuanbao: '腾讯元宝',
@@ -649,6 +740,112 @@
         gemini: 'Gemini',
         claude: 'Claude'
       };
+
+      const tabColors = {
+        yuanbao: '#00d4aa',
+        yiyan: '#4f8cff',
+        doubao: '#4facfe',
+        deepseek: '#4d6bfe',
+        kimi: '#027AFF',
+        qwen: '#6F69F7',
+        chatgpt: '#10a37f',
+        gemini: '#4d8cf6',
+        claude: '#d97757'
+      };
+
+      // 页面管理：加载标签配置
+      async function loadTabConfig() {
+        if (!window.electronAPI || !window.electronAPI.getTabConfig) return;
+        try {
+          const config = await window.electronAPI.getTabConfig();
+          allTabsConfig = config.allTabs;
+          enabledTabs = config.enabledTabs;
+          updateNavVisibility();
+          generateTabToggles();
+        } catch (e) {
+          // 如果加载失败，默认全部显示
+        }
+      }
+
+      // 更新侧边栏标签可见性
+      function updateNavVisibility() {
+        if (enabledTabs.length === 0) return;
+        navItems.forEach(item => {
+          const tabId = item.dataset.tab;
+          item.style.display = enabledTabs.includes(tabId) ? '' : 'none';
+        });
+        // 如果当前活跃标签被禁用，切换到第一个启用的标签
+        if (!enabledTabs.includes(currentTab)) {
+          const allTabIds = allTabsConfig.map(t => t.id);
+          const firstEnabled = allTabIds.find(id => enabledTabs.includes(id));
+          if (firstEnabled) {
+            const btn = document.querySelector(`.nav-item[data-tab="${firstEnabled}"]`);
+            if (btn) btn.click();
+          }
+        }
+      }
+
+      // 生成设置面板中的标签开关列表
+      function generateTabToggles() {
+        const container = document.getElementById('tabToggleList');
+        container.innerHTML = '';
+
+        allTabsConfig.forEach(tab => {
+          const isEnabled = enabledTabs.includes(tab.id);
+          const item = document.createElement('div');
+          item.className = 'tab-toggle-item';
+          item.innerHTML = `
+            <span class="tab-toggle-name">
+              <span class="tab-toggle-dot" style="background: ${tabColors[tab.id] || '#888'}"></span>
+              ${tab.name}
+            </span>
+            <div class="toggle-switch-sm ${isEnabled ? 'active' : ''}" data-tab-id="${tab.id}"></div>
+          `;
+
+          const toggle = item.querySelector('.toggle-switch-sm');
+          toggle.addEventListener('click', () => {
+            const tabId = toggle.dataset.tabId;
+            const willEnable = !toggle.classList.contains('active');
+
+            // 至少保留一个启用的页面
+            if (!willEnable && enabledTabs.length <= 1) return;
+
+            if (willEnable) {
+              // 按 allTabsConfig 原始顺序插入，保持一致
+              const allIds = allTabsConfig.map(t => t.id);
+              enabledTabs.push(tabId);
+              enabledTabs.sort((a, b) => allIds.indexOf(a) - allIds.indexOf(b));
+            } else {
+              enabledTabs = enabledTabs.filter(id => id !== tabId);
+            }
+
+            toggle.classList.toggle('active');
+            updateToggleDisabledState();
+            updateNavVisibility();
+
+            // 立即保存配置
+            if (window.electronAPI) {
+              window.electronAPI.setEnabledTabs(enabledTabs);
+            }
+          });
+
+          container.appendChild(item);
+        });
+
+        updateToggleDisabledState();
+      }
+
+      // 当只剩一个启用的标签时，禁用该标签的开关
+      function updateToggleDisabledState() {
+        const toggles = document.querySelectorAll('.toggle-switch-sm[data-tab-id]');
+        toggles.forEach(toggle => {
+          const isLastEnabled = enabledTabs.length <= 1 && toggle.classList.contains('active');
+          toggle.classList.toggle('disabled', isLastEnabled);
+        });
+      }
+
+      // 初始加载标签配置
+      loadTabConfig();
 
       // 监听加载状态
       if (window.electronAPI && window.electronAPI.onLoadingStatus) {

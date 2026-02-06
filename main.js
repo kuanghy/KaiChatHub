@@ -16,16 +16,17 @@ let currentTab = 'yuanbao';
 let viewsHidden = false;
 
 // AI 模型配置
+// name: 显示名称  defaultEnabled: 首次运行时是否默认显示在侧边栏（用户可在设置中随时开启/关闭）
 const AI_TABS = {
-  yuanbao: { url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao', useProxy: false },
-  yiyan: { url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan', useProxy: false },
-  doubao: { url: 'https://www.doubao.com/', partition: 'persist:doubao', useProxy: false },
-  deepseek: { url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false },
-  kimi: { url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false },
-  qwen: { url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false },
-  chatgpt: { url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true },
-  gemini: { url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true },
-  claude: { url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true }
+  yuanbao: { name: '腾讯元宝', url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao', useProxy: false, defaultEnabled: true },
+  yiyan: { name: '文心一言', url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan', useProxy: false, defaultEnabled: true },
+  doubao: { name: '字节豆包', url: 'https://www.doubao.com/', partition: 'persist:doubao', useProxy: false, defaultEnabled: true },
+  deepseek: { name: '深度求索', url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false, defaultEnabled: true },
+  kimi: { name: 'Kimi', url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false, defaultEnabled: true },
+  qwen: { name: '通义千问', url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false, defaultEnabled: true },
+  chatgpt: { name: 'ChatGPT', url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true, defaultEnabled: false },
+  gemini: { name: 'Gemini', url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true, defaultEnabled: false },
+  claude: { name: 'Claude', url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true, defaultEnabled: false }
 };
 
 // 配置文件路径
@@ -621,15 +622,16 @@ function switchTab(tabName) {
 
   currentTab = tabName;
 
-  // 如果 view 不存在，创建它
-  if (!browserViews[tabName]) {
+  // 如果 view 不存在，创建它（新 view 会通过 did-start/stop-loading 自行管理加载状态）
+  const isNewView = !browserViews[tabName];
+  if (isNewView) {
     browserViews[tabName] = createBrowserView(tabName);
     mainWindow.addBrowserView(browserViews[tabName]);
   }
 
-  // 对已加载的标签，立即通知 sidebar 隐藏加载指示器
-  // （sidebar 点击标签时总会显示 loading indicator，但已加载标签不会触发 did-stop-loading）
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+  // 仅对已存在的 view 发送 loading: false
+  // 新创建的 view 正在加载中，不应提前隐藏加载指示器
+  if (!isNewView && mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
     mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
   }
 
@@ -703,8 +705,12 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // 默认显示元宝
-    switchTab('yuanbao');
+    // 根据配置确定默认标签（第一个启用的标签）
+    const config = loadConfig();
+    const allTabIds = Object.keys(AI_TABS);
+    const enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
+    const defaultTab = allTabIds.find(id => enabledTabs.includes(id)) || allTabIds[0];
+    switchTab(defaultTab);
   });
 
   mainWindow.on('resize', updateViewBounds);
@@ -994,6 +1000,35 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
     }
   });
 
+  return { success: true };
+});
+
+// IPC: 获取标签页配置（名称列表 + 启用状态）
+ipcMain.handle('get-tab-config', () => {
+  const config = loadConfig();
+  const allTabIds = Object.keys(AI_TABS);
+  let enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : null;
+
+  if (!enabledTabs) {
+    // 首次运行：根据各标签的 defaultEnabled 配置决定是否默认显示
+    enabledTabs = allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
+  } else {
+    // 已有配置：完全尊重用户选择，仅过滤掉代码中已移除的标签
+    enabledTabs = enabledTabs.filter(id => allTabIds.includes(id));
+  }
+
+  return {
+    allTabs: allTabIds.map(id => ({ id, name: AI_TABS[id].name || id })),
+    enabledTabs
+  };
+});
+
+// IPC: 设置启用的标签页
+ipcMain.handle('set-enabled-tabs', async (event, enabledTabs) => {
+  const config = loadConfig();
+  config.enabledTabs = enabledTabs;
+  delete config.knownTabs; // 清理历史遗留字段
+  saveConfig(config);
   return { success: true };
 });
 
