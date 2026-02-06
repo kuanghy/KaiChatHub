@@ -529,12 +529,11 @@ function createBrowserView(tabName) {
     retryCount = 0;
   });
 
-  view.webContents.loadURL(tabConfig.url);
-
   // 千问专用：阻止 passport iframe 中的 AWSC/Baxia 安全 SDK 脚本加载
   // AWSC SDK 的音频指纹（ScriptProcessorNode）、WebGL 探测等操作会触发 Chromium 渲染进程崩溃
   // 阻止 SDK 脚本加载后，passport 登录表单仍可正常渲染和提交，且能以原生 iframe 形式嵌入千问页面
   // 仅阻止来自 passport 页面的 AWSC 请求（通过 referrer 判断），不影响千问主页的 AWSC
+  // 注意：必须在 loadURL 之前注册，确保首次加载即生效
   if (tabName === 'qwen') {
     ses.webRequest.onBeforeRequest(
       { urls: ['*://g.alicdn.com/AWSC/*', '*://g.alicdn.com/baxia*/*'] },
@@ -547,6 +546,8 @@ function createBrowserView(tabName) {
       }
     );
   }
+
+  view.webContents.loadURL(tabConfig.url);
 
   // 处理新窗口：统一在外部浏览器中打开
   view.webContents.setWindowOpenHandler(({ url }) => {
@@ -611,6 +612,8 @@ function updateViewBounds() {
 
   Object.values(browserViews).forEach(view => {
     if (!view.webContents.isDestroyed()) {
+      // 跳过正在屏幕外等待加载的 view，避免意外将其恢复到可见区域
+      if (view.getBounds().x < 0) return;
       view.setBounds(bounds);
     }
   });
@@ -629,10 +632,12 @@ function switchTab(tabName) {
     mainWindow.addBrowserView(browserViews[tabName]);
   }
 
-  // 仅对已存在的 view 发送 loading: false
-  // 新创建的 view 正在加载中，不应提前隐藏加载指示器
+  // 仅对已存在且加载完成的 view 发送 loading: false
+  // 新创建的 view 或仍在加载中的 view，由 did-stop-loading 事件自然触发隐藏
   if (!isNewView && mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
+    if (!browserViews[tabName].webContents.isLoading()) {
+      mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
+    }
   }
 
   // 如果设置面板打开，将当前 view 移到屏幕外
@@ -641,15 +646,60 @@ function switchTab(tabName) {
     return;
   }
 
-  // 优先：置顶 + 确保尺寸正确，让切换立即生效
-  // 仅在尺寸不一致时调用 setBounds，避免触发不必要的 Chromium 重布局
-  const [width, height] = mainWindow.getContentSize();
-  const cur = browserViews[tabName].getBounds();
-  if (cur.x !== 72 || cur.y !== 0 || cur.width !== width - 72 || cur.height !== height) {
-    browserViews[tabName].setBounds({ x: 72, y: 0, width: width - 72, height: height });
+  if (isNewView) {
+    // 新标签首次加载：将所有 view 暂时移出屏幕，让 sidebar 中的 loading 指示器对用户可见
+    // 等页面加载完成后再将新 view 置顶显示，避免用户看到空白页面
+    Object.values(browserViews).forEach(view => {
+      if (!view.webContents.isDestroyed()) {
+        view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
+      }
+    });
+
+    const showNewView = () => {
+      if (currentTab !== tabName || viewsHidden || !mainWindow || mainWindow.isDestroyed()) return;
+      if (!browserViews[tabName] || browserViews[tabName].webContents.isDestroyed()) return;
+
+      const [width, height] = mainWindow.getContentSize();
+      const bounds = { x: 72, y: 0, width: width - 72, height: height };
+
+      // 恢复所有 view 的正确位置
+      Object.values(browserViews).forEach(view => {
+        if (!view.webContents.isDestroyed()) {
+          view.setBounds(bounds);
+        }
+      });
+
+      mainWindow.setTopBrowserView(browserViews[tabName]);
+      browserViews[tabName].webContents.focus();
+    };
+
+    browserViews[tabName].webContents.once('did-stop-loading', showNewView);
+    // 超时保底：最多等 10 秒，避免页面长时间无响应时卡在 loading
+    setTimeout(() => {
+      if (browserViews[tabName] && !browserViews[tabName].webContents.isDestroyed()
+          && browserViews[tabName].getBounds().x < 0 && currentTab === tabName) {
+        showNewView();
+      }
+    }, 10000);
+  } else {
+    // 已有 view：直接置顶显示
+    const [width, height] = mainWindow.getContentSize();
+    const bounds = { x: 72, y: 0, width: width - 72, height: height };
+
+    // 确保已加载完成的 view 都在正确位置（可能之前被新标签加载流程临时移出屏幕）
+    // 仍在加载中的 view 保持在屏幕外，避免显示空白内容
+    Object.values(browserViews).forEach(view => {
+      if (!view.webContents.isDestroyed()) {
+        const cur = view.getBounds();
+        if (cur.x < 0 && !view.webContents.isLoading()) {
+          view.setBounds(bounds);
+        }
+      }
+    });
+
+    mainWindow.setTopBrowserView(browserViews[tabName]);
+    browserViews[tabName].webContents.focus();
   }
-  mainWindow.setTopBrowserView(browserViews[tabName]);
-  browserViews[tabName].webContents.focus();
 
   // 非关键操作延后执行，不阻塞视图切换
   setImmediate(() => {
@@ -660,8 +710,8 @@ function switchTab(tabName) {
       }
     });
 
-    // 尝试聚焦到输入框
-    if (!browserViews[tabName].webContents.isDestroyed()) {
+    // 尝试聚焦到输入框（仅已加载的 view）
+    if (!isNewView && browserViews[tabName] && !browserViews[tabName].webContents.isDestroyed()) {
       browserViews[tabName].webContents.executeJavaScript(`
         (function() {
           const selectors = [
@@ -717,7 +767,7 @@ function createWindow() {
 
   // 当主窗口获得焦点时，确保当前 BrowserView 也获得焦点
   mainWindow.on('focus', () => {
-    if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+    if (!viewsHidden && browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
       browserViews[currentTab].webContents.focus();
     }
   });

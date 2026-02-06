@@ -208,11 +208,11 @@
       font-weight: 700;
     }
 
-    /* 加载提示 */
+    /* 加载提示 - 居中在内容区域（sidebar 右侧） */
     .loading-indicator {
       position: fixed;
       top: 50%;
-      left: 50%;
+      left: calc(50% + 36px);
       transform: translate(-50%, -50%);
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
@@ -729,17 +729,15 @@
       let enabledTabs = [];
       let allTabsConfig = [];
 
-      const tabNames = {
-        yuanbao: '腾讯元宝',
-        yiyan: '文心一言',
-        doubao: '字节豆包',
-        deepseek: '深度求索',
-        kimi: 'Kimi',
-        qwen: '通义千问',
-        chatgpt: 'ChatGPT',
-        gemini: 'Gemini',
-        claude: 'Claude'
-      };
+      // 标签名称：从主进程配置动态加载，消除与 main.js 中 AI_TABS 的硬编码重复
+      // 加载前使用 HTML nav-item 的 title 属性作为备用
+      let tabNames = {};
+
+      function getTabName(tabId) {
+        if (tabNames[tabId]) return tabNames[tabId];
+        const btn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+        return btn ? btn.title : tabId;
+      }
 
       const tabColors = {
         yuanbao: '#00d4aa',
@@ -760,6 +758,8 @@
           const config = await window.electronAPI.getTabConfig();
           allTabsConfig = config.allTabs;
           enabledTabs = config.enabledTabs;
+          // 从配置同步标签名称，保持与主进程 AI_TABS 一致
+          allTabsConfig.forEach(tab => { tabNames[tab.id] = tab.name; });
           updateNavVisibility();
           generateTabToggles();
         } catch (e) {
@@ -852,7 +852,7 @@
         window.electronAPI.onLoadingStatus((data) => {
           if (data.tab === currentTab) {
             if (data.loading) {
-              loadingText.textContent = `正在加载 ${tabNames[data.tab]}...`;
+              loadingText.textContent = `正在加载 ${getTabName(data.tab)}...`;
               loadingIndicator.classList.add('show');
             } else {
               loadingIndicator.classList.remove('show');
@@ -883,7 +883,7 @@
           item.classList.add('active');
 
           currentTab = item.dataset.tab;
-          loadingText.textContent = `正在加载 ${tabNames[currentTab]}...`;
+          loadingText.textContent = `正在加载 ${getTabName(currentTab)}...`;
           loadingIndicator.classList.add('show');
 
           if (window.electronAPI) {
