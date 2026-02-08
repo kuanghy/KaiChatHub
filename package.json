@@ -8,6 +8,8 @@
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
+    "build:win:x64": "electron-builder --win --x64 --publish never",
+    "build:win:x64:zip": "npm run build:win:x64 && zip -j dist/KaiChatHub-Setup-${npm_package_version}-x64-win.zip dist/KaiChatHub-Setup-${npm_package_version}-x64-win.exe",
     "build:linux": "electron-builder --linux"
   },
   "author": "",
@@ -27,7 +29,8 @@
       "icon": "assets/icon.icns"
     },
     "win": {
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "artifactName": "KaiChatHub-Setup-${version}-x64-win.${ext}"
     },
     "linux": {
       "icon": "assets/icon.png"
