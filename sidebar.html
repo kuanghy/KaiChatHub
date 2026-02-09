@@ -545,6 +545,48 @@
       transform: translateX(18px);
     }
 
+    .tab-toggle-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .clear-data-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-secondary);
+      transition: var(--transition);
+      opacity: 0;
+      padding: 0;
+    }
+
+    .tab-toggle-item:hover .clear-data-btn {
+      opacity: 1;
+    }
+
+    .clear-data-btn:hover {
+      background: rgba(255, 99, 99, 0.18);
+      border-color: rgba(255, 99, 99, 0.3);
+      color: #ff6363;
+      transform: scale(1.08);
+    }
+
+    .clear-data-btn:active {
+      transform: scale(0.95);
+    }
+
+    .clear-data-btn svg {
+      width: 15px;
+      height: 15px;
+    }
+
     .section-divider {
       height: 1px;
       background: var(--border-color);
@@ -799,8 +841,40 @@
               <span class="tab-toggle-dot" style="background: ${tabColors[tab.id] || '#888'}"></span>
               ${tab.name}
             </span>
-            <div class="toggle-switch-sm ${isEnabled ? 'active' : ''}" data-tab-id="${tab.id}"></div>
+            <div class="tab-toggle-actions">
+              <button class="clear-data-btn" data-tab-id="${tab.id}" title="清除数据">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+              <div class="toggle-switch-sm ${isEnabled ? 'active' : ''}" data-tab-id="${tab.id}"></div>
+            </div>
           `;
+
+          // 清除数据按钮
+          const clearBtn = item.querySelector('.clear-data-btn');
+          clearBtn.addEventListener('click', async () => {
+            const tabId = clearBtn.dataset.tabId;
+            const tabName = getTabName(tabId);
+            if (!confirm(`确定要清除「${tabName}」的所有数据吗？\n\n这将清除该平台的登录状态、Cookie 和缓存，清除后需要重新登录。`)) {
+              return;
+            }
+            if (!window.electronAPI || !window.electronAPI.clearSiteData) return;
+            try {
+              clearBtn.disabled = true;
+              const result = await window.electronAPI.clearSiteData(tabId);
+              if (result.success) {
+                showResult(true, `${tabName} 数据已清除`);
+              } else {
+                showResult(false, `清除失败: ${result.message}`);
+              }
+            } catch (e) {
+              showResult(false, `清除失败: ${e.message}`);
+            } finally {
+              clearBtn.disabled = false;
+            }
+          });
 
           const toggle = item.querySelector('.toggle-switch-sm');
           toggle.addEventListener('click', () => {
@@ -846,6 +920,18 @@
 
       // 初始加载标签配置
       loadTabConfig();
+
+      // 监听活跃标签同步（启动时恢复上次使用的标签、清除数据后重建等）
+      if (window.electronAPI && window.electronAPI.onSetActiveTab) {
+        window.electronAPI.onSetActiveTab((tabName) => {
+          if (tabName && tabName !== currentTab) {
+            currentTab = tabName;
+            navItems.forEach(nav => nav.classList.remove('active'));
+            const btn = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+            if (btn) btn.classList.add('active');
+          }
+        });
+      }
 
       // 监听加载状态
       if (window.electronAPI && window.electronAPI.onLoadingStatus) {

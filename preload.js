@@ -29,5 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTabConfig: () => ipcRenderer.invoke('get-tab-config'),
 
   // 设置启用的标签页
-  setEnabledTabs: (tabs) => ipcRenderer.invoke('set-enabled-tabs', tabs)
+  setEnabledTabs: (tabs) => ipcRenderer.invoke('set-enabled-tabs', tabs),
+
+  // 清除指定平台的数据（Cookie、缓存等）
+  clearSiteData: (tabId) => ipcRenderer.invoke('clear-site-data', tabId),
+
+  // 监听设置活跃标签（用于启动时恢复上次使用的标签）
+  onSetActiveTab: (callback) => ipcRenderer.on('set-active-tab', (event, tabName) => callback(tabName))
 });

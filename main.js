@@ -625,6 +625,11 @@ function switchTab(tabName) {
 
   currentTab = tabName;
 
+  // 通知侧边栏同步活跃标签状态（用于启动时恢复上次使用的标签）
+  if (!mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('set-active-tab', tabName);
+  }
+
   // 如果 view 不存在，创建它（新 view 会通过 did-start/stop-loading 自行管理加载状态）
   const isNewView = !browserViews[tabName];
   if (isNewView) {
@@ -755,11 +760,12 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    // 根据配置确定默认标签（第一个启用的标签）
+    // 根据配置确定默认标签（优先恢复上次使用的标签，否则使用第一个启用的标签）
     const config = loadConfig();
     const allTabIds = Object.keys(AI_TABS);
     const enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
-    const defaultTab = allTabIds.find(id => enabledTabs.includes(id)) || allTabIds[0];
+    const lastTab = config.lastTab;
+    const defaultTab = (lastTab && enabledTabs.includes(lastTab)) ? lastTab : (allTabIds.find(id => enabledTabs.includes(id)) || allTabIds[0]);
     switchTab(defaultTab);
   });
 
@@ -956,6 +962,17 @@ app.on('window-all-closed', () => {
   }
 });
 
+// 退出前保存最后使用的标签页，下次启动时恢复
+app.on('before-quit', () => {
+  try {
+    const config = loadConfig();
+    config.lastTab = currentTab;
+    saveConfig(config);
+  } catch (e) {
+    console.error('Failed to save last tab:', e);
+  }
+});
+
 // IPC: 切换标签
 ipcMain.on('switch-tab', (event, tabName) => {
   switchTab(tabName);
@@ -978,6 +995,11 @@ ipcMain.on('show-views', (event, show) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   if (show) {
+    // 如果当前 view 已被清除（如用户在设置面板中清除了数据），重新创建
+    if (!browserViews[currentTab]) {
+      switchTab(currentTab);
+      return;
+    }
     // 先恢复当前 view 并置顶（让用户立即看到内容）
     const [width, height] = mainWindow.getContentSize();
     const bounds = { x: 72, y: 0, width: width - 72, height: height };
@@ -1080,6 +1102,36 @@ ipcMain.handle('set-enabled-tabs', async (event, enabledTabs) => {
   delete config.knownTabs; // 清理历史遗留字段
   saveConfig(config);
   return { success: true };
+});
+
+// IPC: 清除指定平台的数据（Cookie、缓存、LocalStorage 等）
+ipcMain.handle('clear-site-data', async (event, tabId) => {
+  try {
+    const tabConfig = AI_TABS[tabId];
+    if (!tabConfig) return { success: false, message: '未知平台' };
+
+    const ses = session.fromPartition(tabConfig.partition);
+
+    // 清除所有存储数据（Cookie、LocalStorage、IndexedDB 等）
+    await ses.clearStorageData();
+    // 清除 HTTP 缓存
+    await ses.clearCache();
+
+    // 销毁已创建的 BrowserView
+    if (browserViews[tabId]) {
+      const view = browserViews[tabId];
+      mainWindow.removeBrowserView(view);
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close();
+      }
+      delete browserViews[tabId];
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to clear site data:', error);
+    return { success: false, message: error.message };
+  }
 });
 
 // IPC: 测试代理

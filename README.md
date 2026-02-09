@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.5.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/electron-28.0.0-brightgreen.svg" alt="Electron">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -97,6 +97,10 @@ npm run build:linux
 - **打包**: electron-builder
 
 ## 更新日志
+
+### v1.5.2 (2026-02-07)
+- ✨ 新增独立清除平台数据功能（Cookie、缓存、登录状态）
+- ✨ 记住上次使用的标签页，启动时自动恢复
 
 ### v1.3.1 (2026-01-27)
 - 📝 优化文档结构和内容
