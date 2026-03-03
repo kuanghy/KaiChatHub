@@ -603,20 +603,16 @@ function createBrowserView(tabName) {
   return view;
 }
 
-// 更新 BrowserView 大小（所有已创建的 view 同步更新，保证切换时尺寸一致）
+// 更新当前活跃 BrowserView 的大小
 function updateViewBounds() {
   if (!mainWindow || viewsHidden) return;
 
   const [width, height] = mainWindow.getContentSize();
   const bounds = { x: 72, y: 0, width: width - 72, height: height };
 
-  Object.values(browserViews).forEach(view => {
-    if (!view.webContents.isDestroyed()) {
-      // 跳过正在屏幕外等待加载的 view，避免意外将其恢复到可见区域
-      if (view.getBounds().x < 0) return;
-      view.setBounds(bounds);
-    }
-  });
+  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+    browserViews[currentTab].setBounds(bounds);
+  }
 }
 
 // 切换标签
@@ -653,10 +649,11 @@ function switchTab(tabName) {
 
   if (isNewView) {
     // 新标签首次加载：将所有 view 暂时移出屏幕，让 sidebar 中的 loading 指示器对用户可见
-    // 等页面加载完成后再将新 view 置顶显示，避免用户看到空白页面
+    // 保持原始尺寸只改位置，避免视口缩放触发页面重连等网络操作
+    const [curW, curH] = mainWindow.getContentSize();
     Object.values(browserViews).forEach(view => {
       if (!view.webContents.isDestroyed()) {
-        view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
+        view.setBounds({ x: -10000, y: -10000, width: curW - 72, height: curH });
       }
     });
 
@@ -667,10 +664,11 @@ function switchTab(tabName) {
       const [width, height] = mainWindow.getContentSize();
       const bounds = { x: 72, y: 0, width: width - 72, height: height };
 
-      // 恢复所有 view 的正确位置
-      Object.values(browserViews).forEach(view => {
-        if (!view.webContents.isDestroyed()) {
-          view.setBounds(bounds);
+      // 恢复当前标签到可见区域，其他 view 保持在屏幕外（正常尺寸），避免透过顶层 view 看到底层内容
+      browserViews[tabName].setBounds(bounds);
+      Object.entries(browserViews).forEach(([name, view]) => {
+        if (name !== tabName && !view.webContents.isDestroyed()) {
+          view.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
         }
       });
 
@@ -691,14 +689,12 @@ function switchTab(tabName) {
     const [width, height] = mainWindow.getContentSize();
     const bounds = { x: 72, y: 0, width: width - 72, height: height };
 
-    // 确保已加载完成的 view 都在正确位置（可能之前被新标签加载流程临时移出屏幕）
-    // 仍在加载中的 view 保持在屏幕外，避免显示空白内容
-    Object.values(browserViews).forEach(view => {
-      if (!view.webContents.isDestroyed()) {
-        const cur = view.getBounds();
-        if (cur.x < 0 && !view.webContents.isLoading()) {
-          view.setBounds(bounds);
-        }
+    // 仅显示当前标签，将其他 view 移到屏幕外，避免透过顶层 view 看到底层内容
+    // 保持原始尺寸只改位置，避免视口缩放触发页面重连等网络操作
+    browserViews[tabName].setBounds(bounds);
+    Object.entries(browserViews).forEach(([name, view]) => {
+      if (name !== tabName && !view.webContents.isDestroyed()) {
+        view.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
       }
     });
 
@@ -986,43 +982,21 @@ ipcMain.on('focus-view', () => {
 });
 
 // IPC: 显示/隐藏 BrowserView（用于设置面板）
-// 使用 setTopBrowserView 方案后，所有已创建的 BrowserView 都保持全尺寸
-// 因此隐藏时需要移走所有 view，否则非活跃 view 仍会遮挡设置面板
-let restoreViewsTimer = null;
 ipcMain.on('show-views', (event, show) => {
   viewsHidden = !show;
 
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   if (show) {
-    // 如果当前 view 已被清除（如用户在设置面板中清除了数据），重新创建
     if (!browserViews[currentTab]) {
       switchTab(currentTab);
       return;
     }
-    // 先恢复当前 view 并置顶（让用户立即看到内容）
     const [width, height] = mainWindow.getContentSize();
     const bounds = { x: 72, y: 0, width: width - 72, height: height };
-    if (browserViews[currentTab]) {
-      browserViews[currentTab].setBounds(bounds);
-      mainWindow.setTopBrowserView(browserViews[currentTab]);
-    }
-    // 其他 view 延后恢复，避免多个 BrowserView 同时重绘导致 GPU 峰值
-    restoreViewsTimer = setTimeout(() => {
-      restoreViewsTimer = null;
-      Object.entries(browserViews).forEach(([name, view]) => {
-        if (name !== currentTab && !view.webContents.isDestroyed()) {
-          view.setBounds(bounds);
-        }
-      });
-    }, 300);
+    browserViews[currentTab].setBounds(bounds);
+    mainWindow.setTopBrowserView(browserViews[currentTab]);
   } else {
-    // 清除未完成的恢复定时器，防止设置面板快速开关时 view 意外恢复
-    if (restoreViewsTimer) {
-      clearTimeout(restoreViewsTimer);
-      restoreViewsTimer = null;
-    }
-    // 将所有 view 移到屏幕外（避免遮挡设置面板）
     Object.values(browserViews).forEach(view => {
       if (!view.webContents.isDestroyed()) {
         view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
