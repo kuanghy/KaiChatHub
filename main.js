@@ -26,7 +26,8 @@ const AI_TABS = {
   qwen: { name: '通义千问', url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false, defaultEnabled: true },
   chatgpt: { name: 'ChatGPT', url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true, defaultEnabled: false },
   gemini: { name: 'Gemini', url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true, defaultEnabled: false },
-  claude: { name: 'Claude', url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true, defaultEnabled: false }
+  claude: { name: 'Claude', url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true, defaultEnabled: false },
+  grok: { name: 'Grok', url: 'https://grok.com/', partition: 'persist:grok', useProxy: true, defaultEnabled: false }
 };
 
 // 配置文件路径
@@ -34,6 +35,16 @@ const configPath = path.join(app.getPath('userData'), 'config.json');
 
 // Chrome User-Agent (使用最新版本)
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
+const GROK_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.56 Safari/537.36';
+const GROK_AUTH_HOSTS = [
+  'grok.com',
+  'accounts.x.ai',
+  'x.com',
+  'twitter.com',
+  'accounts.google.com',
+  'appleid.apple.com'
+];
 
 // 读取配置
 function loadConfig() {
@@ -57,13 +68,27 @@ function saveConfig(config) {
   }
 }
 
+function getSessionUserAgent(tabName) {
+  // Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
+  if (tabName === 'grok') return GROK_USER_AGENT;
+  // Gemini 伪装成原生 Safari，更容易通过 Google 检测
+  if (tabName === 'gemini') {
+    return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
+  }
+  return USER_AGENT;
+}
+
+function shouldSkipHeaderSanitization(tabName) {
+  return tabName === 'grok';
+}
+
+function shouldSkipAntiDetection(tabName) {
+  return tabName === 'grok';
+}
+
 // 设置 session
 function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
-  // 对于 Gemini，伪装成原生的 Safari 浏览器，这通常比 Chrome 伪装更易通过 Google 检测
-  const SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
-  const UA = (tabName === 'gemini') ? SAFARI_UA : USER_AGENT;
-
-  ses.setUserAgent(UA);
+  ses.setUserAgent(getSessionUserAgent(tabName));
 
   // Gemini 专用：深度清理请求头（针对 Google 域名）
   if (tabName === 'gemini') {
@@ -84,8 +109,9 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
 
       callback({ requestHeaders });
     });
-  } else {
+  } else if (!shouldSkipHeaderSanitization(tabName)) {
     // 其他页面：清理所有请求头中的 Electron 特征
+    // Grok 登录包含 CAPTCHA / 风控校验，保留原生 Chromium 请求头
     ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
       const { requestHeaders } = details;
 
@@ -430,6 +456,15 @@ function injectGeminiScript(webContents) {
   webContents.executeJavaScript(script).catch(() => {});
 }
 
+function urlMatchesHost(rawUrl, hosts) {
+  try {
+    const { hostname } = new URL(rawUrl);
+    return hosts.some(host => hostname === host || hostname.endsWith(`.${host}`));
+  } catch (_) {
+    return false;
+  }
+}
+
 // 创建 BrowserView
 function createBrowserView(tabName) {
   const tabConfig = AI_TABS[tabName];
@@ -471,7 +506,7 @@ function createBrowserView(tabName) {
     }
   });
 
-  // 自动重连机制（仅对需要代理的页面生效，如 Gemini/ChatGPT/Claude）
+  // 自动重连机制（仅对需要代理的页面生效，如 ChatGPT/Grok/Gemini/Claude）
   let retryCount = 0;
   const maxRetries = tabConfig.useProxy ? 2 : 0;
 
@@ -547,16 +582,51 @@ function createBrowserView(tabName) {
     );
   }
 
-  view.webContents.loadURL(tabConfig.url);
-
-  // 处理新窗口：统一在外部浏览器中打开
+  // 处理新窗口：默认统一在外部浏览器打开
+  // Grok 登录例外：站内/认证域名需要保留在应用内，并共享 persist:grok 会话，否则授权结果无法回到当前页
   view.webContents.setWindowOpenHandler(({ url }) => {
+    if (tabName === 'grok' && urlMatchesHost(url, GROK_AUTH_HOSTS)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          parent: mainWindow,
+          width: 520,
+          height: 760,
+          minWidth: 420,
+          minHeight: 620,
+          autoHideMenuBar: true,
+          backgroundColor: '#0f0f14',
+          title: 'Grok 登录',
+          webPreferences: {
+            session: ses,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            backgroundThrottling: false
+          }
+        }
+      };
+    }
+
     shell.openExternal(url);
     return { action: 'deny' };
   });
 
+  if (tabName === 'grok') {
+    view.webContents.on('did-create-window', (childWindow) => {
+      childWindow.on('closed', () => {
+        if (!view.webContents.isDestroyed()) {
+          view.webContents.reload();
+        }
+      });
+    });
+  }
+
+  view.webContents.loadURL(tabConfig.url);
+
   // 注入反检测脚本
   // Gemini 使用 Safari UA，需要使用专用脚本（伪装 Safari）
+  // Grok 跳过通用伪装，尽量保持浏览器指纹原生，避免触发登录风控
   // 其他页面使用通用反检测脚本（伪装 Chrome）
   if (tabName === 'gemini') {
     view.webContents.on('did-finish-load', () => {
@@ -569,7 +639,7 @@ function createBrowserView(tabName) {
         injectGeminiScript(view.webContents);
       }
     });
-  } else {
+  } else if (!shouldSkipAntiDetection(tabName)) {
     view.webContents.on('dom-ready', () => {
       if (!view.webContents.isDestroyed()) {
         injectAntiDetectionScript(view.webContents);
@@ -1024,7 +1094,7 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
   config.proxy = proxyConfig;
   saveConfig(config);
 
-  // 重新设置国外网站的代理
+  // 重新设置需要代理站点的代理
   Object.entries(AI_TABS).forEach(([tabName, tabConfig]) => {
     if (tabConfig.useProxy) {
       const ses = session.fromPartition(tabConfig.partition);
@@ -1039,7 +1109,7 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
     }
   });
 
-  // 只刷新使用代理的 view（国外站点）
+  // 只刷新使用代理的 view
   Object.entries(browserViews).forEach(([tabName, view]) => {
     if (AI_TABS[tabName] && AI_TABS[tabName].useProxy) {
       view.webContents.reload();
