@@ -606,10 +606,64 @@
       background: var(--border-color);
       margin: 8px 0 24px;
     }
+
+    /* 导航控制按钮（前进/后退） */
+    .nav-controls {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 10px;
+      -webkit-app-region: no-drag;
+    }
+
+    .nav-ctrl-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+
+    .nav-ctrl-btn:hover:not(:disabled) {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .nav-ctrl-btn:active:not(:disabled) {
+      transform: scale(0.92);
+    }
+
+    .nav-ctrl-btn:disabled {
+      opacity: 0.2;
+      cursor: default;
+    }
+
+    .nav-ctrl-btn svg {
+      width: 18px;
+      height: 18px;
+    }
   </style>
 </head>
 <body>
   <aside class="sidebar">
+    <div class="nav-controls">
+      <button class="nav-ctrl-btn" id="goBackBtn" disabled title="后退 (⌘[)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+      <button class="nav-ctrl-btn" id="goForwardBtn" disabled title="前进 (⌘])">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+    </div>
     <nav class="nav-items">
       <!-- 1. 腾讯元宝 -->
       <button class="nav-item active" data-tab="yuanbao" title="腾讯元宝">
@@ -787,6 +841,8 @@
       const proxyIndicator = document.getElementById('proxyIndicator');
       const loadingIndicator = document.getElementById('loadingIndicator');
       const loadingText = document.getElementById('loadingText');
+      const goBackBtn = document.getElementById('goBackBtn');
+      const goForwardBtn = document.getElementById('goForwardBtn');
 
       let currentTab = 'yuanbao';
       let enabledTabs = [];
@@ -975,6 +1031,24 @@
         });
       }
 
+      // 前进/后退按钮
+      goBackBtn.addEventListener('click', () => {
+        if (window.electronAPI) window.electronAPI.goBack();
+      });
+      goForwardBtn.addEventListener('click', () => {
+        if (window.electronAPI) window.electronAPI.goForward();
+      });
+
+      // 监听导航状态变化，更新按钮可用性
+      if (window.electronAPI && window.electronAPI.onNavigationStateChanged) {
+        window.electronAPI.onNavigationStateChanged((data) => {
+          if (data.tab === currentTab) {
+            goBackBtn.disabled = !data.canGoBack;
+            goForwardBtn.disabled = !data.canGoForward;
+          }
+        });
+      }
+
       // 加载代理配置
       if (window.electronAPI) {
         window.electronAPI.getProxyConfig().then(config => {
@@ -993,6 +1067,10 @@
           currentTab = item.dataset.tab;
           loadingText.textContent = `正在加载 ${getTabName(currentTab)}...`;
           loadingIndicator.classList.add('show');
+
+          // 切换时先重置导航按钮，等主进程回传实际状态
+          goBackBtn.disabled = true;
+          goForwardBtn.disabled = true;
 
           if (window.electronAPI) {
             window.electronAPI.switchTab(currentTab);

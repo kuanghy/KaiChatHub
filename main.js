@@ -582,8 +582,8 @@ function createBrowserView(tabName) {
     );
   }
 
-  // 处理新窗口：默认统一在外部浏览器打开
-  // Grok 登录例外：站内/认证域名需要保留在应用内，并共享 persist:grok 会话，否则授权结果无法回到当前页
+  // 处理新窗口：默认在当前页面内打开，配合前进/后退按钮使用
+  // Grok 登录例外：站内/认证域名需要保留在应用内子窗口，并共享 persist:grok 会话，否则授权结果无法回到当前页
   view.webContents.setWindowOpenHandler(({ url }) => {
     if (tabName === 'grok' && urlMatchesHost(url, GROK_AUTH_HOSTS)) {
       return {
@@ -608,7 +608,7 @@ function createBrowserView(tabName) {
       };
     }
 
-    shell.openExternal(url);
+    view.webContents.loadURL(url).catch(() => {});
     return { action: 'deny' };
   });
 
@@ -670,7 +670,24 @@ function createBrowserView(tabName) {
     });
   }
 
+  // 监听导航事件，同步前进/后退按钮状态
+  view.webContents.on('did-navigate', () => sendNavigationState(tabName));
+  view.webContents.on('did-navigate-in-page', () => sendNavigationState(tabName));
+
   return view;
+}
+
+// 向渲染进程发送当前标签页的导航状态（canGoBack/canGoForward）
+function sendNavigationState(tabName) {
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents || mainWindow.webContents.isDestroyed()) return;
+  if (!browserViews[tabName] || browserViews[tabName].webContents.isDestroyed()) return;
+
+  const wc = browserViews[tabName].webContents;
+  mainWindow.webContents.send('navigation-state-changed', {
+    tab: tabName,
+    canGoBack: wc.canGoBack(),
+    canGoForward: wc.canGoForward()
+  });
 }
 
 // 更新当前活跃 BrowserView 的大小
@@ -802,6 +819,8 @@ function switchTab(tabName) {
         })();
       `).catch(() => {});
     }
+
+    sendNavigationState(tabName);
   });
 }
 
@@ -986,6 +1005,25 @@ app.whenReady().then(() => {
       label: '视图',
       submenu: [
         {
+          label: '后退',
+          accelerator: 'CmdOrCtrl+[',
+          click: () => {
+            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+              browserViews[currentTab].webContents.goBack();
+            }
+          }
+        },
+        {
+          label: '前进',
+          accelerator: 'CmdOrCtrl+]',
+          click: () => {
+            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+              browserViews[currentTab].webContents.goForward();
+            }
+          }
+        },
+        { type: 'separator' },
+        {
           label: '刷新当前页面',
           accelerator: 'CmdOrCtrl+R',
           click: () => {
@@ -1079,6 +1117,20 @@ ipcMain.on('show-views', (event, show) => {
 ipcMain.on('refresh-tab', () => {
   if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
     browserViews[currentTab].webContents.reload();
+  }
+});
+
+// IPC: 后退
+ipcMain.on('go-back', () => {
+  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+    browserViews[currentTab].webContents.goBack();
+  }
+});
+
+// IPC: 前进
+ipcMain.on('go-forward', () => {
+  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+    browserViews[currentTab].webContents.goForward();
   }
 });
 
