@@ -7,15 +7,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 刷新当前页面
   refreshTab: () => ipcRenderer.send('refresh-tab'),
 
-  // 后退
-  goBack: () => ipcRenderer.send('go-back'),
-
-  // 前进
-  goForward: () => ipcRenderer.send('go-forward'),
-
-  // 监听导航状态变化（canGoBack/canGoForward）
-  onNavigationStateChanged: (callback) => ipcRenderer.on('navigation-state-changed', (event, data) => callback(data)),
-
   // 显示/隐藏 BrowserView
   showViews: (show) => ipcRenderer.send('show-views', show),
 
