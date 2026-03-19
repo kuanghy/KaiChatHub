@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -673,6 +673,61 @@ function createBrowserView(tabName) {
   // 监听导航事件，同步前进/后退按钮状态
   view.webContents.on('did-navigate', () => sendNavigationState(tabName));
   view.webContents.on('did-navigate-in-page', () => sendNavigationState(tabName));
+
+  // 右键菜单
+  view.webContents.on('context-menu', (event, params) => {
+    const menuTemplate = [];
+    const hasText = params.selectionText.trim().length > 0;
+    const isEditable = params.isEditable;
+
+    if (isEditable) {
+      menuTemplate.push(
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制', enabled: hasText },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
+      );
+    } else if (hasText) {
+      menuTemplate.push(
+        { role: 'copy', label: '复制' },
+        { type: 'separator' },
+        { role: 'selectAll', label: '全选' }
+      );
+    }
+
+    if (params.linkURL) {
+      if (menuTemplate.length > 0) menuTemplate.push({ type: 'separator' });
+      menuTemplate.push({
+        label: '复制链接',
+        click: () => clipboard.writeText(params.linkURL)
+      });
+    }
+
+    if (params.mediaType === 'image') {
+      if (menuTemplate.length > 0) menuTemplate.push({ type: 'separator' });
+      menuTemplate.push({
+        label: '复制图片',
+        click: () => view.webContents.copyImageAt(params.x, params.y)
+      });
+      if (params.srcURL) {
+        menuTemplate.push({
+          label: '复制图片链接',
+          click: () => clipboard.writeText(params.srcURL)
+        });
+      }
+    }
+
+    if (menuTemplate.length > 0) menuTemplate.push({ type: 'separator' });
+    menuTemplate.push(
+      { role: 'reload', label: '刷新页面' },
+      { role: 'toggleDevTools', label: '检查元素' }
+    );
+
+    Menu.buildFromTemplate(menuTemplate).popup();
+  });
 
   return view;
 }
