@@ -22,7 +22,7 @@
     <path d="M396 560 L760 780 Q780 800 740 800 L620 800 L396 600 Z" />
   </g>
 
-  <!-- 聊天气泡装饰 -->
-  <circle cx="760" cy="300" r="48" fill="#FFFFFF" opacity="0.9"/>
-  <circle cx="760" cy="300" r="24" fill="url(#grad1)"/>
+  <!-- 聊天气泡装饰（踢球效果） -->
+  <circle cx="790" cy="660" r="48" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="790" cy="660" r="24" fill="url(#grad1)"/>
 </svg>

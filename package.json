@@ -26,14 +26,14 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "assets/icon.icns"
+      "icon": "assets/logo.icns"
     },
     "win": {
-      "icon": "assets/icon.ico",
+      "icon": "assets/logo.ico",
       "artifactName": "KaiChatHub-Setup-${version}-x64-win.${ext}"
     },
     "linux": {
-      "icon": "assets/icon.png"
+      "icon": "assets/logo.png"
     }
   }
 }
