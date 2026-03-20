@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.6.3-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/electron-28.0.0-brightgreen.svg" alt="Electron">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -137,6 +137,9 @@ npm run build:linux
 - **打包**: electron-builder
 
 ## 更新日志
+
+### v1.6.3 (2026-03-20)
+- 🔧 针对 Perplexity Cloudflare 人机验证尝试 UA/sec-ch-ua 对齐、preload 与响应头处理（问题仍在跟进）
 
 ### v1.6.2 (2026-03-20)
 - ✨ 新增智谱清言（chatglm.cn）、Perplexity（perplexity.ai）支持
