@@ -71,8 +71,8 @@ function saveConfig(config) {
 }
 
 function getSessionUserAgent(tabName) {
-  // Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
-  if (tabName === 'grok') return GROK_USER_AGENT;
+  // Grok/Perplexity 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
+  if (tabName === 'grok' || tabName === 'perplexity') return GROK_USER_AGENT;
   // Gemini 伪装成原生 Safari，更容易通过 Google 检测
   if (tabName === 'gemini') {
     return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
@@ -111,6 +111,22 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
 
       callback({ requestHeaders });
     });
+  } else if (tabName === 'perplexity') {
+    // Perplexity (Cloudflare Turnstile)：伪造 sec-ch-ua 替代删除，保持与 Chrome 120 一致的指纹
+    ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
+      const { requestHeaders } = details;
+      Object.keys(requestHeaders).forEach(key => {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === 'x-requested-with') {
+          delete requestHeaders[key];
+        } else if (lowerKey === 'sec-ch-ua') {
+          requestHeaders[key] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
+        } else if (lowerKey === 'sec-ch-ua-full-version-list') {
+          requestHeaders[key] = '"Not_A Brand";v="8.0.0.0", "Chromium";v="120.0.6099.56", "Google Chrome";v="120.0.6099.56"';
+        }
+      });
+      callback({ requestHeaders });
+    });
   } else if (!shouldSkipHeaderSanitization(tabName)) {
     // 其他页面：清理所有请求头中的 Electron 特征
     // Grok 登录包含 CAPTCHA / 风控校验，保留原生 Chromium 请求头
@@ -142,9 +158,10 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
     });
   }
 
-  // 千问专用：移除安全限制头（包括 passport 的 iframe 嵌入限制）
-  // 千问和 passport 都需要移除 X-Frame-Options 等头，以支持 passport 登录 iframe 正常嵌入
-  if (tabName === 'qwen') {
+  // 移除安全限制头，确保页面内 iframe 正常通信
+  // - 千问：passport 登录 iframe 嵌入
+  // - Perplexity：Cloudflare Turnstile 挑战 iframe 通信
+  if (tabName === 'qwen' || tabName === 'perplexity') {
     ses.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = Object.assign({}, details.responseHeaders);
       Object.keys(responseHeaders).forEach(key => {
@@ -458,6 +475,63 @@ function injectGeminiScript(webContents) {
   webContents.executeJavaScript(script).catch(() => {});
 }
 
+// Perplexity 专用：最小化反检测（仅伪造 userAgentData 和 webdriver）
+// Cloudflare Turnstile 能检测 navigator.plugins/WebGL 等属性篡改，因此不做激进伪装
+function injectPerplexityScript(webContents) {
+  const script = `
+    (function() {
+      const marker = Symbol.for('_k_px_');
+      if (window[marker]) return;
+      window[marker] = true;
+
+      // 1. 伪造 userAgentData，将 Electron 品牌替换为 Google Chrome
+      try {
+        const brands = [
+          { brand: 'Not_A Brand', version: '8' },
+          { brand: 'Chromium', version: '120' },
+          { brand: 'Google Chrome', version: '120' }
+        ];
+        const fullVersionList = [
+          { brand: 'Not_A Brand', version: '8.0.0.0' },
+          { brand: 'Chromium', version: '120.0.6099.56' },
+          { brand: 'Google Chrome', version: '120.0.6099.56' }
+        ];
+        const uaData = {
+          brands: brands,
+          mobile: false,
+          platform: 'macOS',
+          getHighEntropyValues: () => Promise.resolve({
+            brands: brands,
+            fullVersionList: fullVersionList,
+            mobile: false,
+            platform: 'macOS',
+            platformVersion: '15.0.0',
+            architecture: 'arm',
+            bitness: '64',
+            model: '',
+            uaFullVersion: '120.0.6099.56'
+          }),
+          toJSON: () => ({ brands: brands, mobile: false, platform: 'macOS' })
+        };
+        Object.defineProperty(navigator, 'userAgentData', {
+          get: () => uaData,
+          configurable: true
+        });
+      } catch(e) {}
+
+      // 2. 隐藏 webdriver 特征
+      try {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true
+        });
+      } catch(e) {}
+    })();
+  `;
+
+  webContents.executeJavaScript(script).catch(() => {});
+}
+
 function urlMatchesHost(rawUrl, hosts) {
   try {
     const { hostname } = new URL(rawUrl);
@@ -475,14 +549,16 @@ function createBrowserView(tabName) {
   const config = loadConfig();
   setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
 
-  // 千问专用：使用 preload 脚本在页面代码执行前替换会导致崩溃的浏览器 API
-  // AWSC/Baxia 安全 SDK 在千问主页也会运行（不仅是登录页），需要同样的保护
+  // 千问/Perplexity：使用 preload 脚本在页面代码执行前修改浏览器 API
+  // - 千问：替换会导致 Electron 渲染进程崩溃的 AWSC/Baxia SDK 相关 API
+  // - Perplexity：伪造 navigator.userAgentData 隐藏 Electron 身份，避免 Cloudflare Turnstile 检测
   // 安全说明：contextIsolation: false 使 preload 与页面共享 JS 世界，才能修改 window 全局对象
   // 虽然 Electron 文档不推荐此组合，但此处 preload 是封闭 IIFE，不暴露 require 或 Node API，安全可控
-  const qwenPreload = tabName === 'qwen' ? {
-    contextIsolation: false,
-    preload: path.join(__dirname, 'preload-qwen.js')
-  } : {};
+  const preloadOverrides = (() => {
+    if (tabName === 'qwen') return { contextIsolation: false, preload: path.join(__dirname, 'preload-qwen.js') };
+    if (tabName === 'perplexity') return { contextIsolation: false, preload: path.join(__dirname, 'preload-perplexity.js') };
+    return {};
+  })();
 
   const view = new BrowserView({
     webPreferences: {
@@ -491,7 +567,7 @@ function createBrowserView(tabName) {
       contextIsolation: true,
       sandbox: true,
       backgroundThrottling: false,
-      ...qwenPreload
+      ...preloadOverrides
     }
   });
 
@@ -639,6 +715,23 @@ function createBrowserView(tabName) {
     view.webContents.on('did-navigate-in-page', () => {
       if (!view.webContents.isDestroyed()) {
         injectGeminiScript(view.webContents);
+      }
+    });
+  } else if (tabName === 'perplexity') {
+    // Perplexity：注入最小化反检测脚本（伪造 userAgentData，不做激进指纹伪装）
+    view.webContents.on('dom-ready', () => {
+      if (!view.webContents.isDestroyed()) {
+        injectPerplexityScript(view.webContents);
+      }
+    });
+    view.webContents.on('did-finish-load', () => {
+      if (!view.webContents.isDestroyed()) {
+        injectPerplexityScript(view.webContents);
+      }
+    });
+    view.webContents.on('did-navigate-in-page', () => {
+      if (!view.webContents.isDestroyed()) {
+        injectPerplexityScript(view.webContents);
       }
     });
   } else if (!shouldSkipAntiDetection(tabName)) {
