@@ -24,10 +24,12 @@ const AI_TABS = {
   deepseek: { name: '深度求索', url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false, defaultEnabled: true },
   kimi: { name: 'Kimi', url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false, defaultEnabled: true },
   qwen: { name: '通义千问', url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false, defaultEnabled: true },
+  chatglm: { name: '智谱清言', url: 'https://chatglm.cn/', partition: 'persist:chatglm', useProxy: false, defaultEnabled: false },
   chatgpt: { name: 'ChatGPT', url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true, defaultEnabled: false },
   gemini: { name: 'Gemini', url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true, defaultEnabled: false },
   claude: { name: 'Claude', url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true, defaultEnabled: false },
-  grok: { name: 'Grok', url: 'https://grok.com/', partition: 'persist:grok', useProxy: true, defaultEnabled: false }
+  grok: { name: 'Grok', url: 'https://grok.com/', partition: 'persist:grok', useProxy: true, defaultEnabled: false },
+  perplexity: { name: 'Perplexity', url: 'https://www.perplexity.ai/', partition: 'persist:perplexity', useProxy: true, defaultEnabled: false }
 };
 
 // 配置文件路径
@@ -506,7 +508,7 @@ function createBrowserView(tabName) {
     }
   });
 
-  // 自动重连机制（仅对需要代理的页面生效，如 ChatGPT/Grok/Gemini/Claude）
+  // 自动重连机制（仅对需要代理的页面生效）
   let retryCount = 0;
   const maxRetries = tabConfig.useProxy ? 2 : 0;
 

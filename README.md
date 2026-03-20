@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.6.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/electron-28.0.0-brightgreen.svg" alt="Electron">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -26,10 +26,12 @@
 | 4 | 🔷 **深度求索 DeepSeek** | https://chat.deepseek.com/ | ❌ |
 | 5 | 🌙 **月之暗面 Kimi** | https://www.kimi.com/ | ❌ |
 | 6 | 🟣 **通义千问** | https://www.qianwen.com/ | ❌ |
-| 7 | 🌿 **ChatGPT** | https://chatgpt.com/ | ✅ |
-| 8 | ✨ **Google Gemini** | https://gemini.google.com/ | ✅ |
-| 9 | 🧡 **Anthropic Claude** | https://claude.ai/ | ✅ |
-| 10 | 🟪 **xAI Grok** | https://grok.com/ | ✅ |
+| 7 | 🔶 **智谱清言** | https://chatglm.cn/ | ❌ |
+| 8 | 🌿 **ChatGPT** | https://chatgpt.com/ | ✅ |
+| 9 | ✨ **Google Gemini** | https://gemini.google.com/ | ✅ |
+| 10 | 🧡 **Anthropic Claude** | https://claude.ai/ | ✅ |
+| 11 | 🟪 **xAI Grok** | https://grok.com/ | ✅ |
+| 12 | 🌀 **Perplexity** | https://www.perplexity.ai/ | ✅ |
 
 ## 特性
 
@@ -97,7 +99,7 @@ npm run build:linux
 
 ### 代理使用
 
-- 对于需要代理访问的 AI 模型（ChatGPT、Gemini、Claude、Grok），点击左下角设置图标配置代理
+- 对于需要代理访问的 AI 模型（ChatGPT、Gemini、Claude、Grok、Perplexity），点击左下角设置图标配置代理
 - 支持 `HTTP`、`SOCKS5`、`SOCKS4` 代理
 - 保存前可先使用“测试连接”确认代理是否可用
 
@@ -135,6 +137,11 @@ npm run build:linux
 - **打包**: electron-builder
 
 ## 更新日志
+
+### v1.6.2 (2026-03-20)
+- ✨ 新增智谱清言（chatglm.cn）、Perplexity（perplexity.ai）支持
+- 🌐 Perplexity 走代理通道；两者默认关闭，可在设置中开启
+- 🎨 图标来自 [lobehub/lobe-icons](https://github.com/lobehub/lobe-icons)
 
 ### v1.5.3 (2026-03-11)
 - ✨ 新增 Grok 支持
