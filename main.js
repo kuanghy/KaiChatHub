@@ -160,8 +160,7 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
 
   // 移除安全限制头，确保页面内 iframe 正常通信
   // - 千问：passport 登录 iframe 嵌入
-  // - Perplexity：Cloudflare Turnstile 挑战 iframe 通信
-  if (tabName === 'qwen' || tabName === 'perplexity') {
+  if (tabName === 'qwen') {
     ses.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = Object.assign({}, details.responseHeaders);
       Object.keys(responseHeaders).forEach(key => {
@@ -187,15 +186,7 @@ function injectAntiDetectionScript(webContents) {
       if (window[marker]) return;
       window[marker] = true;
 
-      // 1. 隐藏 webdriver 特征
-      try {
-        Object.defineProperty(navigator, 'webdriver', {
-          get: () => undefined,
-          configurable: true
-        });
-      } catch(e) {}
-
-      // 2. 删除 Electron/Chrome 自动化相关属性
+      // 1. 删除 Electron/Chrome 自动化相关属性
       try {
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
@@ -513,18 +504,18 @@ function injectPerplexityScript(webContents) {
           }),
           toJSON: () => ({ brands: brands, mobile: false, platform: 'macOS' })
         };
-        Object.defineProperty(navigator, 'userAgentData', {
+        Object.defineProperty(Navigator.prototype, 'userAgentData', {
           get: () => uaData,
-          configurable: true
+          configurable: true,
+          enumerable: true
         });
       } catch(e) {}
 
-      // 2. 隐藏 webdriver 特征
+      // 2. 删除 Electron/Chrome 自动化相关属性
       try {
-        Object.defineProperty(navigator, 'webdriver', {
-          get: () => undefined,
-          configurable: true
-        });
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
       } catch(e) {}
     })();
   `;

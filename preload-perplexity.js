@@ -23,7 +23,7 @@
   ];
 
   try {
-    Object.defineProperty(navigator, 'userAgentData', {
+    Object.defineProperty(Navigator.prototype, 'userAgentData', {
       get: function() {
         return {
           brands: brands,
@@ -47,16 +47,15 @@
           }
         };
       },
-      configurable: true
+      configurable: true,
+      enumerable: true
     });
   } catch(e) {}
 
-  // === 2. 隐藏 webdriver 标识 ===
-  // 配合 app.commandLine 的 disable-blink-features=AutomationControlled 双重保险
+  // === 2. 删除 Electron/Chrome 自动化相关属性 ===
   try {
-    Object.defineProperty(navigator, 'webdriver', {
-      get: function() { return undefined; },
-      configurable: true
-    });
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
   } catch(e) {}
 })();
