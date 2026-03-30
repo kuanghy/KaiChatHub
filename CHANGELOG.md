@@ -2,13 +2,14 @@
 
 所有重要的项目变更都会记录在此文件中。
 
-## [1.6.6] - 2026-03-30
+## [1.6.7] - 2026-03-30
 
 ### 修复
-- 🐛 修复 Perplexity 页面"无法启动线程"及回复卡在"正在思考"的问题
-- 🔧 移除全局 disable-http2 标志，恢复 TLS ALPN h2 协商，通过 Cloudflare TLS 指纹检测
-- 🛡️ Perplexity BrowserView 改为 sandbox: false，确保 Cloudflare Turnstile 挑战 Worker 正常启动
-- 🔄 将 Perplexity 浏览器指纹从 Chrome 120 升级到 Chrome 131，与通用 UA 保持一致
+- 🐛 修复 Perplexity 页面无法正常创建线程、长时间卡在加载或回复状态异常的问题
+- 🔄 升级到 Electron 33，并统一 Perplexity 的 UA、`sec-ch-ua` 与 `userAgentData` 指纹到当前 Chromium 版本
+- 🛡️ 恢复 Perplexity BrowserView 的兼容性配置，确保 Cloudflare Turnstile 挑战 Worker 正常启动
+- 🌐 优化代理配置保存、测试与切换时机，避免空代理配置和旧代理状态导致的异常结果
+- 💾 将 Perplexity 默认持久化分区恢复为 `persist:perplexity`
 
 ## [1.5.2] - 2026-02-07
 

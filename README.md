@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.3-blue.svg" alt="Version">
-  <img src="https://img.shields.io/badge/electron-28.0.0-brightgreen.svg" alt="Electron">
+  <img src="https://img.shields.io/badge/version-1.6.7-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/electron-33.0.0-brightgreen.svg" alt="Electron">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
@@ -102,6 +102,7 @@ npm run build:linux
 - 对于需要代理访问的 AI 模型（ChatGPT、Gemini、Claude、Grok、Perplexity），点击左下角设置图标配置代理
 - 支持 `HTTP`、`SOCKS5`、`SOCKS4` 代理
 - 保存前可先使用“测试连接”确认代理是否可用
+- 启用代理时需填写完整代理地址，否则不会保存该配置
 
 ### 数据清理
 
@@ -131,12 +132,17 @@ npm run build:linux
 
 ## 技术栈
 
-- **框架**: Electron 28
+- **框架**: Electron 33
 - **页面容器**: BrowserView
 - **前端**: 原生 HTML/CSS/JavaScript
 - **打包**: electron-builder
 
 ## 更新日志
+
+### v1.6.7 (2026-03-30)
+- 🐛 修复 Perplexity 页面无法正常创建线程、长时间卡在加载或回复状态异常的问题
+- 🔧 升级到 Electron 33，并将 Perplexity 浏览器指纹统一到当前 Chromium 版本
+- 🌐 优化代理配置校验、测试与切换时机，减少代理变更后的异常加载
 
 ### v1.6.3 (2026-03-20)
 - 🔧 针对 Perplexity Cloudflare 人机验证尝试 UA/sec-ch-ua 对齐、preload 与响应头处理（问题仍在跟进）
