@@ -5,9 +5,15 @@ const fs = require('fs');
 // 禁用自动化控制标识（必须在 app ready 之前设置）
 if (app && app.commandLine) {
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  // 禁用 HTTP/2（某些代理对 HTTP/2 支持不佳，可能导致国外站点连接中断）
-  // 注意：这是全局设置，会影响所有页面，但对国内站点影响很小
-  app.commandLine.appendSwitch('disable-http2');
+  // 【不加 disable-http2，原因如下】
+  // Cloudflare 的 TLS 指纹检测会验证 ALPN 扩展是否包含 h2；若禁用 HTTP/2，TLS 握手中将只有
+  // http/1.1，与声称的 Chrome 131 不符，bot score 会降低，导致 Perplexity 等 Cloudflare
+  // 保护的站点拦截请求（"无法启动线程"）。
+  //
+  // 代理兼容性说明：HTTPS over CONNECT 代理时，TLS 握手和 HTTP/2 协商发生在加密隧道内，
+  // 代理只转发 TCP 字节，无需感知 h2，Clash/sing-box/v2ray 等主流代理客户端均无影响。
+  // 若日后特定站点（如 Gemini）出现代理连接问题，应在该站点的 session 层面排查，
+  // 而不是重新全局禁用 HTTP/2。
 }
 
 let mainWindow;
@@ -39,6 +45,8 @@ const configPath = path.join(app.getPath('userData'), 'config.json');
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 // Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
 const GROK_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.56 Safari/537.36';
+// Perplexity 使用与通用 USER_AGENT 一致的 Chrome 131，避免 Cloudflare 将过旧版本标记为可疑
+const PERPLEXITY_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const GROK_AUTH_HOSTS = [
   'grok.com',
   'accounts.x.ai',
@@ -71,8 +79,10 @@ function saveConfig(config) {
 }
 
 function getSessionUserAgent(tabName) {
-  // Grok/Perplexity 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
-  if (tabName === 'grok' || tabName === 'perplexity') return GROK_USER_AGENT;
+  // Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
+  if (tabName === 'grok') return GROK_USER_AGENT;
+  // Perplexity 使用 Chrome 131 UA，避免 Cloudflare 将过旧版本标记为可疑
+  if (tabName === 'perplexity') return PERPLEXITY_USER_AGENT;
   // Gemini 伪装成原生 Safari，更容易通过 Google 检测
   if (tabName === 'gemini') {
     return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
@@ -112,7 +122,7 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
       callback({ requestHeaders });
     });
   } else if (tabName === 'perplexity') {
-    // Perplexity (Cloudflare Turnstile)：伪造 sec-ch-ua 替代删除，保持与 Chrome 120 一致的指纹
+    // Perplexity (Cloudflare Turnstile)：伪造 sec-ch-ua 替代删除，保持与 Chrome 131 一致的指纹
     ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
       const { requestHeaders } = details;
       Object.keys(requestHeaders).forEach(key => {
@@ -120,9 +130,9 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
         if (lowerKey === 'x-requested-with') {
           delete requestHeaders[key];
         } else if (lowerKey === 'sec-ch-ua') {
-          requestHeaders[key] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
+          requestHeaders[key] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
         } else if (lowerKey === 'sec-ch-ua-full-version-list') {
-          requestHeaders[key] = '"Not_A Brand";v="8.0.0.0", "Chromium";v="120.0.6099.56", "Google Chrome";v="120.0.6099.56"';
+          requestHeaders[key] = '"Google Chrome";v="131.0.6778.85", "Chromium";v="131.0.6778.85", "Not_A Brand";v="24.0.0.0"';
         }
       });
       callback({ requestHeaders });
@@ -475,17 +485,17 @@ function injectPerplexityScript(webContents) {
       if (window[marker]) return;
       window[marker] = true;
 
-      // 1. 伪造 userAgentData，将 Electron 品牌替换为 Google Chrome
+      // 1. 伪造 userAgentData，将 Electron 品牌替换为 Google Chrome 131
       try {
         const brands = [
-          { brand: 'Not_A Brand', version: '8' },
-          { brand: 'Chromium', version: '120' },
-          { brand: 'Google Chrome', version: '120' }
+          { brand: 'Google Chrome', version: '131' },
+          { brand: 'Chromium', version: '131' },
+          { brand: 'Not_A Brand', version: '24' }
         ];
         const fullVersionList = [
-          { brand: 'Not_A Brand', version: '8.0.0.0' },
-          { brand: 'Chromium', version: '120.0.6099.56' },
-          { brand: 'Google Chrome', version: '120.0.6099.56' }
+          { brand: 'Google Chrome', version: '131.0.6778.85' },
+          { brand: 'Chromium', version: '131.0.6778.85' },
+          { brand: 'Not_A Brand', version: '24.0.0.0' }
         ];
         const uaData = {
           brands: brands,
@@ -500,7 +510,7 @@ function injectPerplexityScript(webContents) {
             architecture: 'arm',
             bitness: '64',
             model: '',
-            uaFullVersion: '120.0.6099.56'
+            uaFullVersion: '131.0.6778.85'
           }),
           toJSON: () => ({ brands: brands, mobile: false, platform: 'macOS' })
         };
@@ -547,7 +557,8 @@ function createBrowserView(tabName) {
   // 虽然 Electron 文档不推荐此组合，但此处 preload 是封闭 IIFE，不暴露 require 或 Node API，安全可控
   const preloadOverrides = (() => {
     if (tabName === 'qwen') return { contextIsolation: false, preload: path.join(__dirname, 'preload-qwen.js') };
-    if (tabName === 'perplexity') return { contextIsolation: false, preload: path.join(__dirname, 'preload-perplexity.js') };
+    // Perplexity：sandbox: false 确保 Cloudflare Turnstile 的挑战 Worker 可以正常启动（无法启动线程问题）
+    if (tabName === 'perplexity') return { contextIsolation: false, sandbox: false, preload: path.join(__dirname, 'preload-perplexity.js') };
     return {};
   })();
 

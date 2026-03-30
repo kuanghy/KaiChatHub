@@ -2,6 +2,14 @@
 
 所有重要的项目变更都会记录在此文件中。
 
+## [1.6.6] - 2026-03-30
+
+### 修复
+- 🐛 修复 Perplexity 页面"无法启动线程"及回复卡在"正在思考"的问题
+- 🔧 移除全局 disable-http2 标志，恢复 TLS ALPN h2 协商，通过 Cloudflare TLS 指纹检测
+- 🛡️ Perplexity BrowserView 改为 sandbox: false，确保 Cloudflare Turnstile 挑战 Worker 正常启动
+- 🔄 将 Perplexity 浏览器指纹从 Chrome 120 升级到 Chrome 131，与通用 UA 保持一致
+
 ## [1.5.2] - 2026-02-07
 
 ### 新增

@@ -10,16 +10,17 @@
   'use strict';
 
   // === 1. 伪造 navigator.userAgentData ===
-  // 将 Electron 品牌替换为 Google Chrome，版本号与 Electron 28 内置 Chromium 120 对齐
+  // 将 Electron 品牌替换为 Google Chrome，版本号使用 Chrome 131（与通用 UA 一致）
+  // 注意：Cloudflare 会将极旧版本的 Chrome 标记为可疑，需与 User-Agent 中的版本保持一致
   var brands = [
-    { brand: 'Not_A Brand', version: '8' },
-    { brand: 'Chromium', version: '120' },
-    { brand: 'Google Chrome', version: '120' }
+    { brand: 'Google Chrome', version: '131' },
+    { brand: 'Chromium', version: '131' },
+    { brand: 'Not_A Brand', version: '24' }
   ];
   var fullVersionList = [
-    { brand: 'Not_A Brand', version: '8.0.0.0' },
-    { brand: 'Chromium', version: '120.0.6099.56' },
-    { brand: 'Google Chrome', version: '120.0.6099.56' }
+    { brand: 'Google Chrome', version: '131.0.6778.85' },
+    { brand: 'Chromium', version: '131.0.6778.85' },
+    { brand: 'Not_A Brand', version: '24.0.0.0' }
   ];
 
   try {
@@ -39,7 +40,7 @@
               architecture: 'arm',
               bitness: '64',
               model: '',
-              uaFullVersion: '120.0.6099.56'
+              uaFullVersion: '131.0.6778.85'
             });
           },
           toJSON: function() {
