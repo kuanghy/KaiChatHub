@@ -1096,6 +1096,10 @@
           enabled: proxyToggle.classList.contains('active'),
           server: proxyServer.value.trim()
         };
+        if (config.enabled && !config.server) {
+          showResult(false, '启用代理时请输入代理地址');
+          return;
+        }
         // 禁用按钮防止重复点击
         saveProxyBtn.disabled = true;
         try {

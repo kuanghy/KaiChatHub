@@ -5,15 +5,6 @@ const fs = require('fs');
 // 禁用自动化控制标识（必须在 app ready 之前设置）
 if (app && app.commandLine) {
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  // 【不加 disable-http2，原因如下】
-  // Cloudflare 的 TLS 指纹检测会验证 ALPN 扩展是否包含 h2；若禁用 HTTP/2，TLS 握手中将只有
-  // http/1.1，与声称的 Chrome 131 不符，bot score 会降低，导致 Perplexity 等 Cloudflare
-  // 保护的站点拦截请求（"无法启动线程"）。
-  //
-  // 代理兼容性说明：HTTPS over CONNECT 代理时，TLS 握手和 HTTP/2 协商发生在加密隧道内，
-  // 代理只转发 TCP 字节，无需感知 h2，Clash/sing-box/v2ray 等主流代理客户端均无影响。
-  // 若日后特定站点（如 Gemini）出现代理连接问题，应在该站点的 session 层面排查，
-  // 而不是重新全局禁用 HTTP/2。
 }
 
 let mainWindow;
@@ -41,12 +32,10 @@ const AI_TABS = {
 // 配置文件路径
 const configPath = path.join(app.getPath('userData'), 'config.json');
 
-// Chrome User-Agent (使用最新版本)
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-// Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
-const GROK_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.56 Safari/537.36';
-// Perplexity 使用与通用 USER_AGENT 一致的 Chrome 131，避免 Cloudflare 将过旧版本标记为可疑
-const PERPLEXITY_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// Chrome User-Agent（与 Electron 33 内置 Chromium 130 对齐）
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+// Grok/Perplexity 等 Cloudflare 站点的 UA，版本号必须与实际 TLS 指纹一致
+const GROK_USER_AGENT = USER_AGENT;
 const GROK_AUTH_HOSTS = [
   'grok.com',
   'accounts.x.ai',
@@ -61,12 +50,14 @@ function loadConfig() {
   try {
     if (fs.existsSync(configPath)) {
       const data = fs.readFileSync(configPath, 'utf-8');
-      return JSON.parse(data);
+      const config = JSON.parse(data);
+      config.proxy = normalizeProxyConfig(config.proxy);
+      return config;
     }
   } catch (error) {
     console.error('Failed to load config:', error);
   }
-  return { proxy: { enabled: false, server: '', bypass: '' } };
+  return { proxy: normalizeProxyConfig() };
 }
 
 // 保存配置
@@ -78,11 +69,36 @@ function saveConfig(config) {
   }
 }
 
+function normalizeProxyConfig(proxyConfig = {}) {
+  const server = typeof proxyConfig.server === 'string' ? proxyConfig.server.trim() : '';
+  const bypass = typeof proxyConfig.bypass === 'string' ? proxyConfig.bypass.trim() : '';
+  return {
+    enabled: !!(proxyConfig.enabled && server),
+    server,
+    bypass
+  };
+}
+
+async function applyProxyToSession(ses, useProxy = false, proxyConfig = null) {
+  const normalizedProxy = normalizeProxyConfig(proxyConfig);
+
+  if (!useProxy) return normalizedProxy;
+
+  if (normalizedProxy.enabled) {
+    await ses.setProxy({
+      proxyRules: normalizedProxy.server,
+      proxyBypassRules: '<local>'
+    });
+  } else {
+    await ses.setProxy({ proxyRules: '' });
+  }
+
+  return normalizedProxy;
+}
+
 function getSessionUserAgent(tabName) {
-  // Grok 使用与 Electron 28 内置 Chromium 对齐的 UA，避免和 sec-ch-ua/实际内核版本不一致触发风控
-  if (tabName === 'grok') return GROK_USER_AGENT;
-  // Perplexity 使用 Chrome 131 UA，避免 Cloudflare 将过旧版本标记为可疑
-  if (tabName === 'perplexity') return PERPLEXITY_USER_AGENT;
+  // Grok/Perplexity 等 Cloudflare 站点：UA 版本必须与实际 Chromium TLS 指纹一致
+  if (tabName === 'grok' || tabName === 'perplexity') return GROK_USER_AGENT;
   // Gemini 伪装成原生 Safari，更容易通过 Google 检测
   if (tabName === 'gemini') {
     return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15';
@@ -99,7 +115,7 @@ function shouldSkipAntiDetection(tabName) {
 }
 
 // 设置 session
-function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
+async function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   ses.setUserAgent(getSessionUserAgent(tabName));
 
   // Gemini 专用：深度清理请求头（针对 Google 域名）
@@ -122,7 +138,7 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
       callback({ requestHeaders });
     });
   } else if (tabName === 'perplexity') {
-    // Perplexity (Cloudflare Turnstile)：伪造 sec-ch-ua 替代删除，保持与 Chrome 131 一致的指纹
+    // Perplexity (Cloudflare Turnstile)：伪造 sec-ch-ua，将 Electron 替换为 Google Chrome
     ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
       const { requestHeaders } = details;
       Object.keys(requestHeaders).forEach(key => {
@@ -130,9 +146,9 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
         if (lowerKey === 'x-requested-with') {
           delete requestHeaders[key];
         } else if (lowerKey === 'sec-ch-ua') {
-          requestHeaders[key] = '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+          requestHeaders[key] = '"Not)A;Brand";v="99", "Chromium";v="130", "Google Chrome";v="130"';
         } else if (lowerKey === 'sec-ch-ua-full-version-list') {
-          requestHeaders[key] = '"Google Chrome";v="131.0.6778.85", "Chromium";v="131.0.6778.85", "Not_A Brand";v="24.0.0.0"';
+          requestHeaders[key] = '"Not)A;Brand";v="99.0.0.0", "Chromium";v="130.0.0.0", "Google Chrome";v="130.0.0.0"';
         }
       });
       callback({ requestHeaders });
@@ -161,12 +177,7 @@ function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   ses.setPermissionCheckHandler(() => true);
 
   // 应用代理（针对国外网站）
-  if (useProxy && proxyConfig && proxyConfig.enabled && proxyConfig.server) {
-    ses.setProxy({
-      proxyRules: proxyConfig.server,
-      proxyBypassRules: '<local>'
-    });
-  }
+  await applyProxyToSession(ses, useProxy, proxyConfig);
 
   // 移除安全限制头，确保页面内 iframe 正常通信
   // - 千问：passport 登录 iframe 嵌入
@@ -485,17 +496,17 @@ function injectPerplexityScript(webContents) {
       if (window[marker]) return;
       window[marker] = true;
 
-      // 1. 伪造 userAgentData，将 Electron 品牌替换为 Google Chrome 131
+      // 1. 伪造 userAgentData，将 Electron 品牌替换为 Google Chrome
       try {
         const brands = [
-          { brand: 'Google Chrome', version: '131' },
-          { brand: 'Chromium', version: '131' },
-          { brand: 'Not_A Brand', version: '24' }
+          { brand: 'Not)A;Brand', version: '99' },
+          { brand: 'Chromium', version: '130' },
+          { brand: 'Google Chrome', version: '130' }
         ];
         const fullVersionList = [
-          { brand: 'Google Chrome', version: '131.0.6778.85' },
-          { brand: 'Chromium', version: '131.0.6778.85' },
-          { brand: 'Not_A Brand', version: '24.0.0.0' }
+          { brand: 'Not)A;Brand', version: '99.0.0.0' },
+          { brand: 'Chromium', version: '130.0.0.0' },
+          { brand: 'Google Chrome', version: '130.0.0.0' }
         ];
         const uaData = {
           brands: brands,
@@ -510,7 +521,7 @@ function injectPerplexityScript(webContents) {
             architecture: 'arm',
             bitness: '64',
             model: '',
-            uaFullVersion: '131.0.6778.85'
+            uaFullVersion: '130.0.0.0'
           }),
           toJSON: () => ({ brands: brands, mobile: false, platform: 'macOS' })
         };
@@ -543,12 +554,12 @@ function urlMatchesHost(rawUrl, hosts) {
 }
 
 // 创建 BrowserView
-function createBrowserView(tabName) {
+async function createBrowserView(tabName) {
   const tabConfig = AI_TABS[tabName];
   const ses = session.fromPartition(tabConfig.partition);
 
   const config = loadConfig();
-  setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
+  await setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
 
   // 千问/Perplexity：使用 preload 脚本在页面代码执行前修改浏览器 API
   // - 千问：替换会导致 Electron 渲染进程崩溃的 AWSC/Baxia SDK 相关 API
@@ -557,7 +568,6 @@ function createBrowserView(tabName) {
   // 虽然 Electron 文档不推荐此组合，但此处 preload 是封闭 IIFE，不暴露 require 或 Node API，安全可控
   const preloadOverrides = (() => {
     if (tabName === 'qwen') return { contextIsolation: false, preload: path.join(__dirname, 'preload-qwen.js') };
-    // Perplexity：sandbox: false 确保 Cloudflare Turnstile 的挑战 Worker 可以正常启动（无法启动线程问题）
     if (tabName === 'perplexity') return { contextIsolation: false, sandbox: false, preload: path.join(__dirname, 'preload-perplexity.js') };
     return {};
   })();
@@ -604,7 +614,7 @@ function createBrowserView(tabName) {
       }
       // 延迟 1.5 秒后重试
       setTimeout(() => {
-        if (!view.webContents.isDestroyed()) {
+        if (view.webContents && !view.webContents.isDestroyed()) {
           view.webContents.reload();
         }
       }, 1500);
@@ -842,7 +852,7 @@ function updateViewBounds() {
 }
 
 // 切换标签
-function switchTab(tabName) {
+async function switchTab(tabName) {
   if (!AI_TABS[tabName] || !mainWindow) return;
 
   currentTab = tabName;
@@ -855,7 +865,7 @@ function switchTab(tabName) {
   // 如果 view 不存在，创建它（新 view 会通过 did-start/stop-loading 自行管理加载状态）
   const isNewView = !browserViews[tabName];
   if (isNewView) {
-    browserViews[tabName] = createBrowserView(tabName);
+    browserViews[tabName] = await createBrowserView(tabName);
     mainWindow.addBrowserView(browserViews[tabName]);
   }
 
@@ -990,7 +1000,7 @@ function createWindow() {
     const enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
     const lastTab = config.lastTab;
     const defaultTab = (lastTab && enabledTabs.includes(lastTab)) ? lastTab : (allTabIds.find(id => enabledTabs.includes(id)) || allTabIds[0]);
-    switchTab(defaultTab);
+    switchTab(defaultTab).catch(error => console.error('Failed to switch default tab:', error));
   });
 
   mainWindow.on('resize', updateViewBounds);
@@ -1218,7 +1228,7 @@ app.on('before-quit', () => {
 
 // IPC: 切换标签
 ipcMain.on('switch-tab', (event, tabName) => {
-  switchTab(tabName);
+  switchTab(tabName).catch(error => console.error('Failed to switch tab:', error));
 });
 
 // IPC: 设置 BrowserView 焦点
@@ -1236,7 +1246,7 @@ ipcMain.on('show-views', (event, show) => {
 
   if (show) {
     if (!browserViews[currentTab]) {
-      switchTab(currentTab);
+      switchTab(currentTab).catch(error => console.error('Failed to restore current tab:', error));
       return;
     }
     const [width, height] = mainWindow.getContentSize();
@@ -1262,33 +1272,27 @@ ipcMain.on('refresh-tab', () => {
 // IPC: 获取代理配置
 ipcMain.handle('get-proxy-config', () => {
   const config = loadConfig();
-  return config.proxy || { enabled: false, server: '', bypass: '' };
+  return config.proxy || normalizeProxyConfig();
 });
 
 // IPC: 保存代理配置
 ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
   const config = loadConfig();
-  config.proxy = proxyConfig;
+  config.proxy = normalizeProxyConfig(proxyConfig);
   saveConfig(config);
 
   // 重新设置需要代理站点的代理
-  Object.entries(AI_TABS).forEach(([tabName, tabConfig]) => {
-    if (tabConfig.useProxy) {
+  await Promise.all(
+    Object.entries(AI_TABS).map(async ([tabName, tabConfig]) => {
+      if (!tabConfig.useProxy) return;
       const ses = session.fromPartition(tabConfig.partition);
-      if (proxyConfig.enabled && proxyConfig.server) {
-        ses.setProxy({
-          proxyRules: proxyConfig.server,
-          proxyBypassRules: '<local>'
-        });
-      } else {
-        ses.setProxy({ proxyRules: '' });
-      }
-    }
-  });
+      await applyProxyToSession(ses, true, config.proxy);
+    })
+  );
 
   // 只刷新使用代理的 view
   Object.entries(browserViews).forEach(([tabName, view]) => {
-    if (AI_TABS[tabName] && AI_TABS[tabName].useProxy) {
+    if (AI_TABS[tabName] && AI_TABS[tabName].useProxy && view.webContents && !view.webContents.isDestroyed()) {
       view.webContents.reload();
     }
   });
@@ -1341,11 +1345,15 @@ ipcMain.handle('clear-site-data', async (event, tabId) => {
     // 销毁已创建的 BrowserView
     if (browserViews[tabId]) {
       const view = browserViews[tabId];
-      mainWindow.removeBrowserView(view);
-      if (!view.webContents.isDestroyed()) {
-        view.webContents.close();
-      }
       delete browserViews[tabId];
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.removeBrowserView(view);
+      }
+      try {
+        if (view.webContents && !view.webContents.isDestroyed()) {
+          view.webContents.close();
+        }
+      } catch (_) {}
     }
 
     return { success: true };
@@ -1358,13 +1366,9 @@ ipcMain.handle('clear-site-data', async (event, tabId) => {
 // IPC: 测试代理
 ipcMain.handle('test-proxy', async (event, proxyConfig) => {
   try {
+    const normalizedProxy = normalizeProxyConfig(proxyConfig);
     const testSession = session.fromPartition('test-proxy');
-    if (proxyConfig.enabled && proxyConfig.server) {
-      await testSession.setProxy({
-        proxyRules: proxyConfig.server,
-        proxyBypassRules: '<local>'
-      });
-    }
+    await applyProxyToSession(testSession, true, normalizedProxy);
 
     const { net } = require('electron');
     const request = net.request({
