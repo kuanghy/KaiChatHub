@@ -6,9 +6,6 @@ const fs = require('fs');
 if (app && app.commandLine) {
   // 禁用自动化控制标识，避免被网站检测为自动化浏览器
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-  // 禁用 QUIC 协议：部分代理对 QUIC (HTTP/3) 支持不完善，
-  // 会导致 Gemini 等流式长连接中途断开或请求失败
-  app.commandLine.appendSwitch('disable-quic');
 }
 
 let mainWindow;
