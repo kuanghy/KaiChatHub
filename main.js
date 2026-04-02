@@ -2,9 +2,13 @@ const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu, clipboar
 const path = require('path');
 const fs = require('fs');
 
-// 禁用自动化控制标识（必须在 app ready 之前设置）
+// 必须在 app ready 之前设置
 if (app && app.commandLine) {
+  // 禁用自动化控制标识，避免被网站检测为自动化浏览器
   app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+  // 禁用 QUIC 协议：部分代理对 QUIC (HTTP/3) 支持不完善，
+  // 会导致 Gemini 等流式长连接中途断开或请求失败
+  app.commandLine.appendSwitch('disable-quic');
 }
 
 let mainWindow;
@@ -118,10 +122,12 @@ function shouldSkipAntiDetection(tabName) {
 async function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
   ses.setUserAgent(getSessionUserAgent(tabName));
 
-  // Gemini 专用：深度清理请求头（针对 Google 域名）
+  // Gemini 专用：深度清理请求头
+  // 必须覆盖所有 URL，因为 Gemini API 请求可能走 *.googleapis.com 等域名，
+  // 若只过滤 *.google.com 会导致 sec-ch-ua 泄露 Electron 身份，与 Safari UA 矛盾
   if (tabName === 'gemini') {
     ses.webRequest.onBeforeSendHeaders({
-      urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.googleusercontent.com/*']
+      urls: ['<all_urls>']
     }, (details, callback) => {
       const { requestHeaders } = details;
 
