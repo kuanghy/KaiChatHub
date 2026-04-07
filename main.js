@@ -832,8 +832,8 @@ async function createBrowserView(tabName) {
       { label: '后退', accelerator: 'CmdOrCtrl+[', enabled: wc.canGoBack(), click: () => wc.goBack() },
       { label: '前进', accelerator: 'CmdOrCtrl+]', enabled: wc.canGoForward(), click: () => wc.goForward() },
       { type: 'separator' },
-      { role: 'reload', label: '刷新页面' },
-      { role: 'toggleDevTools', label: '检查元素' }
+      { label: '刷新页面', accelerator: 'CmdOrCtrl+R', click: () => wc.reload() },
+      { label: '检查元素', click: () => wc.openDevTools() }
     );
 
     Menu.buildFromTemplate(menuTemplate).popup();
