@@ -53,12 +53,13 @@ function loadConfig() {
       const data = fs.readFileSync(configPath, 'utf-8');
       const config = JSON.parse(data);
       config.proxy = normalizeProxyConfig(config.proxy);
+      config.tabProxy = normalizeTabProxyConfig(config.tabProxy);
       return config;
     }
   } catch (error) {
     console.error('Failed to load config:', error);
   }
-  return { proxy: normalizeProxyConfig() };
+  return { proxy: normalizeProxyConfig(), tabProxy: {} };
 }
 
 // 保存配置
@@ -80,21 +81,36 @@ function normalizeProxyConfig(proxyConfig = {}) {
   };
 }
 
-async function applyProxyToSession(ses, useProxy = false, proxyConfig = null) {
-  const normalizedProxy = normalizeProxyConfig(proxyConfig);
+function normalizeTabProxyConfig(tabProxy) {
+  if (!tabProxy || typeof tabProxy !== 'object') return {};
+  const result = {};
+  for (const [tabId, server] of Object.entries(tabProxy)) {
+    if (typeof server === 'string' && server.trim()) {
+      result[tabId] = server.trim();
+    }
+  }
+  return result;
+}
 
-  if (!useProxy) return normalizedProxy;
+// 计算某 tab 的实际代理：独立代理 > 统一代理 > 直连
+function getEffectiveProxy(tabName, useProxy, globalProxy, tabProxy) {
+  const perTab = tabProxy && typeof tabProxy[tabName] === 'string'
+    ? tabProxy[tabName].trim()
+    : '';
+  if (perTab) return { enabled: true, server: perTab };
+  if (useProxy) return globalProxy;
+  return { enabled: false, server: '' };
+}
 
-  if (normalizedProxy.enabled) {
+async function applyProxyToSession(ses, effectiveProxy) {
+  if (effectiveProxy.enabled && effectiveProxy.server) {
     await ses.setProxy({
-      proxyRules: normalizedProxy.server,
+      proxyRules: effectiveProxy.server,
       proxyBypassRules: '<local>'
     });
   } else {
     await ses.setProxy({ proxyRules: '' });
   }
-
-  return normalizedProxy;
 }
 
 function getSessionUserAgent(tabName) {
@@ -116,7 +132,7 @@ function shouldSkipAntiDetection(tabName) {
 }
 
 // 设置 session
-async function setupSession(ses, tabName, useProxy = false, proxyConfig = null) {
+async function setupSession(ses, tabName, effectiveProxy) {
   ses.setUserAgent(getSessionUserAgent(tabName));
 
   // Gemini 专用：深度清理请求头
@@ -179,8 +195,7 @@ async function setupSession(ses, tabName, useProxy = false, proxyConfig = null) 
 
   ses.setPermissionCheckHandler(() => true);
 
-  // 应用代理（针对国外网站）
-  await applyProxyToSession(ses, useProxy, proxyConfig);
+  await applyProxyToSession(ses, effectiveProxy);
 
   // 移除安全限制头，确保页面内 iframe 正常通信
   // - 千问：passport 登录 iframe 嵌入
@@ -562,7 +577,8 @@ async function createBrowserView(tabName) {
   const ses = session.fromPartition(tabConfig.partition);
 
   const config = loadConfig();
-  await setupSession(ses, tabName, tabConfig.useProxy, config.proxy);
+  const effectiveProxy = getEffectiveProxy(tabName, tabConfig.useProxy, config.proxy, config.tabProxy);
+  await setupSession(ses, tabName, effectiveProxy);
 
   // 千问/Perplexity：使用 preload 脚本在页面代码执行前修改浏览器 API
   // - 千问：替换会导致 Electron 渲染进程崩溃的 AWSC/Baxia SDK 相关 API
@@ -599,18 +615,19 @@ async function createBrowserView(tabName) {
     }
   });
 
-  // 自动重连机制（仅对需要代理的页面生效）
+  // 自动重连机制（对使用代理的页面生效，含独立代理）
+  const usesProxy = effectiveProxy.enabled && !!effectiveProxy.server;
   let retryCount = 0;
-  const maxRetries = tabConfig.useProxy ? 2 : 0;
+  const maxRetries = usesProxy ? 2 : 0;
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     // 只处理主框架的加载失败
     if (!isMainFrame) return;
 
-    // 网络相关错误码，对需要代理的页面尝试自动重连
+    // 网络相关错误码，对使用代理的页面尝试自动重连
     const retryableErrors = [-2, -7, -21, -100, -101, -102, -105, -106, -118, -130, -137];
 
-    if (tabConfig.useProxy && retryableErrors.includes(errorCode) && retryCount < maxRetries) {
+    if (usesProxy && retryableErrors.includes(errorCode) && retryCount < maxRetries) {
       retryCount++;
       if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send('loading-status', { tab: tabName, loading: true, error: null });
@@ -628,8 +645,8 @@ async function createBrowserView(tabName) {
     retryCount = 0;
 
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed() && errorCode !== -3) {
-      // 常见错误码转换为友好提示（仅对代理页面显示详细信息）
-      if (tabConfig.useProxy) {
+      // 常见错误码转换为友好提示（仅对使用代理的页面显示详细信息）
+      if (usesProxy) {
         const errorMessages = {
           '-2': '网络连接失败',
           '-7': '连接超时',
@@ -1272,30 +1289,75 @@ ipcMain.on('refresh-tab', () => {
   }
 });
 
-// IPC: 获取代理配置
+// IPC: 获取代理配置（含独立代理和 tab useProxy 信息）
 ipcMain.handle('get-proxy-config', () => {
   const config = loadConfig();
-  return config.proxy || normalizeProxyConfig();
+  const proxy = config.proxy || normalizeProxyConfig();
+  return {
+    ...proxy,
+    tabProxy: config.tabProxy || {},
+    tabs: Object.entries(AI_TABS).map(([id, tab]) => ({
+      id,
+      name: tab.name,
+      useProxy: tab.useProxy
+    }))
+  };
 });
 
-// IPC: 保存代理配置
+// IPC: 保存统一代理配置
 ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
   const config = loadConfig();
   config.proxy = normalizeProxyConfig(proxyConfig);
   saveConfig(config);
 
-  // 重新设置需要代理站点的代理
+  // 有独立代理的 tab 不受统一代理变更影响
   await Promise.all(
     Object.entries(AI_TABS).map(async ([tabName, tabConfig]) => {
+      if (config.tabProxy[tabName]) return;
       if (!tabConfig.useProxy) return;
       const ses = session.fromPartition(tabConfig.partition);
-      await applyProxyToSession(ses, true, config.proxy);
+      const effectiveProxy = getEffectiveProxy(tabName, tabConfig.useProxy, config.proxy, config.tabProxy);
+      await applyProxyToSession(ses, effectiveProxy);
     })
   );
 
-  // 只刷新使用代理的 view
   Object.entries(browserViews).forEach(([tabName, view]) => {
+    if (config.tabProxy[tabName]) return;
     if (AI_TABS[tabName] && AI_TABS[tabName].useProxy && view.webContents && !view.webContents.isDestroyed()) {
+      view.webContents.reload();
+    }
+  });
+
+  return { success: true };
+});
+
+// IPC: 保存独立代理配置
+ipcMain.handle('set-tab-proxy-config', async (event, tabProxy) => {
+  const config = loadConfig();
+  const oldTabProxy = config.tabProxy || {};
+  config.tabProxy = normalizeTabProxyConfig(tabProxy);
+  saveConfig(config);
+
+  // 仅对代理配置实际发生变化的 tab 重新应用并刷新
+  const affectedTabs = [];
+  for (const tabName of Object.keys(AI_TABS)) {
+    if ((oldTabProxy[tabName] || '') !== (config.tabProxy[tabName] || '')) {
+      affectedTabs.push(tabName);
+    }
+  }
+
+  await Promise.all(
+    affectedTabs.map(async (tabName) => {
+      const tabConfig = AI_TABS[tabName];
+      const ses = session.fromPartition(tabConfig.partition);
+      const effectiveProxy = getEffectiveProxy(tabName, tabConfig.useProxy, config.proxy, config.tabProxy);
+      await applyProxyToSession(ses, effectiveProxy);
+    })
+  );
+
+  affectedTabs.forEach(tabName => {
+    const view = browserViews[tabName];
+    if (view && view.webContents && !view.webContents.isDestroyed()) {
       view.webContents.reload();
     }
   });
@@ -1371,7 +1433,7 @@ ipcMain.handle('test-proxy', async (event, proxyConfig) => {
   try {
     const normalizedProxy = normalizeProxyConfig(proxyConfig);
     const testSession = session.fromPartition('test-proxy');
-    await applyProxyToSession(testSession, true, normalizedProxy);
+    await applyProxyToSession(testSession, normalizedProxy);
 
     const { net } = require('electron');
     const request = net.request({

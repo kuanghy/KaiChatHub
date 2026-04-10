@@ -639,6 +639,111 @@
       margin: 8px 0 24px;
     }
 
+    /* 独立代理 */
+    .tab-proxy-subtitle {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .tab-proxy-list {
+      background: var(--bg-tertiary);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .tab-proxy-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      transition: background 0.15s;
+    }
+
+    .tab-proxy-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tab-proxy-item + .tab-proxy-item {
+      border-top: 1px solid var(--border-color);
+    }
+
+    .tab-proxy-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      white-space: nowrap;
+      min-width: 72px;
+    }
+
+    .tab-proxy-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .tab-proxy-input {
+      flex: 1;
+      padding: 6px 10px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    .tab-proxy-input:focus {
+      outline: none;
+      border-color: var(--accent-settings);
+    }
+
+    .tab-proxy-input::placeholder {
+      color: var(--text-secondary);
+      opacity: 0.6;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    .tab-proxy-expand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-top: 1px solid var(--border-color);
+      transition: background 0.15s;
+      user-select: none;
+    }
+
+    .tab-proxy-expand:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+    }
+
+    .tab-proxy-expand svg {
+      width: 14px;
+      height: 14px;
+      transition: transform 0.3s;
+    }
+
+    .tab-proxy-expand.expanded svg {
+      transform: rotate(180deg);
+    }
+
+    .tab-proxy-extra {
+      display: none;
+    }
+
+    .tab-proxy-extra.show {
+      display: block;
+    }
+
   </style>
 </head>
 <body>
@@ -810,6 +915,16 @@
           <button class="btn btn-secondary" id="testProxyBtn">测试连接</button>
           <button class="btn btn-primary" id="saveProxyBtn">保存设置</button>
         </div>
+
+        <div class="section-divider" style="margin-top: 24px;"></div>
+        <div class="section-title">独立代理</div>
+        <div class="tab-proxy-subtitle">
+          为单个平台指定不同的代理服务器，留空则使用统一代理或直连
+        </div>
+        <div class="tab-proxy-list" id="tabProxyList"></div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="saveTabProxyBtn">保存独立代理</button>
+        </div>
       </div>
     </div>
   </div>
@@ -826,12 +941,15 @@
       const saveProxyBtn = document.getElementById('saveProxyBtn');
       const testResult = document.getElementById('testResult');
       const proxyIndicator = document.getElementById('proxyIndicator');
+      const saveTabProxyBtn = document.getElementById('saveTabProxyBtn');
       const loadingIndicator = document.getElementById('loadingIndicator');
       const loadingText = document.getElementById('loadingText');
 
       let currentTab = 'yuanbao';
       let enabledTabs = [];
       let allTabsConfig = [];
+      let tabProxyConfig = {};
+      let tabsProxyInfo = [];
 
       // 标签名称：从主进程配置动态加载，消除与 main.js 中 AI_TABS 的硬编码重复
       // 加载前使用 HTML nav-item 的 title 属性作为备用
@@ -1018,12 +1136,16 @@
         });
       }
 
-      // 加载代理配置
+      // 加载代理配置（含独立代理和 tab 信息）
       if (window.electronAPI) {
         window.electronAPI.getProxyConfig().then(config => {
           proxyToggle.classList.toggle('active', config.enabled);
           proxyServer.value = config.server || '';
-          proxyIndicator.classList.toggle('active', config.enabled);
+          tabProxyConfig = config.tabProxy || {};
+          tabsProxyInfo = config.tabs || [];
+          const hasAnyProxy = config.enabled || Object.keys(tabProxyConfig).length > 0;
+          proxyIndicator.classList.toggle('active', hasAnyProxy);
+          generateTabProxyList();
         }).catch(console.error);
       }
 
@@ -1104,7 +1226,8 @@
         saveProxyBtn.disabled = true;
         try {
           await window.electronAPI.setProxyConfig(config);
-          proxyIndicator.classList.toggle('active', config.enabled);
+          const hasAnyProxy = config.enabled || Object.keys(tabProxyConfig).length > 0;
+          proxyIndicator.classList.toggle('active', hasAnyProxy);
           showResult(true, '已保存');
         } catch (err) {
           showResult(false, '保存失败: ' + err.message);
@@ -1126,6 +1249,84 @@
           resultTimeout = null;
         }, 3000);
       }
+
+      // 生成独立代理列表
+      function generateTabProxyList() {
+        const container = document.getElementById('tabProxyList');
+        container.innerHTML = '';
+        if (!tabsProxyInfo.length) return;
+
+        const proxyTabs = tabsProxyInfo.filter(t => t.useProxy);
+        const directTabs = tabsProxyInfo.filter(t => !t.useProxy);
+
+        proxyTabs.forEach(tab => {
+          container.appendChild(createTabProxyItem(tab, tabProxyConfig[tab.id] || '', '使用统一代理'));
+        });
+
+        if (directTabs.length > 0) {
+          const expandToggle = document.createElement('div');
+          expandToggle.className = 'tab-proxy-expand';
+          expandToggle.innerHTML = `
+            更多平台
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          `;
+
+          const extraContainer = document.createElement('div');
+          extraContainer.className = 'tab-proxy-extra';
+
+          directTabs.forEach(tab => {
+            extraContainer.appendChild(createTabProxyItem(tab, tabProxyConfig[tab.id] || '', '直连'));
+          });
+
+          expandToggle.addEventListener('click', () => {
+            expandToggle.classList.toggle('expanded');
+            extraContainer.classList.toggle('show');
+          });
+
+          container.appendChild(expandToggle);
+          container.appendChild(extraContainer);
+        }
+      }
+
+      function createTabProxyItem(tab, value, placeholder) {
+        const item = document.createElement('div');
+        item.className = 'tab-proxy-item';
+        item.innerHTML = `
+          <span class="tab-proxy-name">
+            <span class="tab-proxy-dot" style="background: ${tabColors[tab.id] || '#888'}"></span>
+            ${tab.name}
+          </span>
+          <input type="text" class="tab-proxy-input" data-tab-id="${tab.id}" placeholder="${placeholder}">
+        `;
+        item.querySelector('.tab-proxy-input').value = value;
+        return item;
+      }
+
+      // 保存独立代理
+      saveTabProxyBtn.addEventListener('click', async () => {
+        if (!window.electronAPI) return;
+        const inputs = document.querySelectorAll('.tab-proxy-input');
+        const newTabProxy = {};
+        inputs.forEach(input => {
+          const val = input.value.trim();
+          if (val) newTabProxy[input.dataset.tabId] = val;
+        });
+        saveTabProxyBtn.disabled = true;
+        try {
+          await window.electronAPI.setTabProxyConfig(newTabProxy);
+          tabProxyConfig = newTabProxy;
+          const globalEnabled = proxyToggle.classList.contains('active');
+          const hasAnyProxy = globalEnabled || Object.keys(tabProxyConfig).length > 0;
+          proxyIndicator.classList.toggle('active', hasAnyProxy);
+          showResult(true, '独立代理已保存');
+        } catch (err) {
+          showResult(false, '保存失败: ' + err.message);
+        } finally {
+          saveTabProxyBtn.disabled = false;
+        }
+      });
 
       // Escape 关闭设置面板
       document.addEventListener('keydown', (e) => {

@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 测试代理连接
   testProxy: (config) => ipcRenderer.invoke('test-proxy', config),
 
+  // 保存独立代理配置
+  setTabProxyConfig: (tabProxy) => ipcRenderer.invoke('set-tab-proxy-config', tabProxy),
+
   // 设置 BrowserView 焦点
   focusView: () => ipcRenderer.send('focus-view'),
 
