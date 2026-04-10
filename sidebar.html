@@ -325,7 +325,7 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 20px;
-      width: 480px;
+      width: 640px;
       max-width: 90vw;
       max-height: 85vh;
       display: flex;
@@ -377,6 +377,71 @@
     .close-btn:hover {
       background: var(--bg-tertiary);
       color: var(--text-primary);
+    }
+
+    .settings-tabs {
+      display: flex;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .settings-tab {
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      position: relative;
+      transition: color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      outline: none;
+    }
+
+    .settings-tab:hover {
+      color: var(--text-primary);
+    }
+
+    .settings-tab.active {
+      color: var(--accent-settings);
+    }
+
+    .settings-tab::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 8px;
+      right: 8px;
+      height: 2px;
+      background: var(--accent-settings);
+      border-radius: 2px 2px 0 0;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .settings-tab.active::after {
+      opacity: 1;
+    }
+
+    .settings-tab svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .settings-tab-content {
+      display: none;
+    }
+
+    .settings-tab-content.active {
+      display: block;
+    }
+
+    .settings-panel > .test-result {
+      margin: 0 24px;
     }
 
     .settings-body {
@@ -885,45 +950,59 @@
           </svg>
         </button>
       </div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-settings-tab="pages">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          </svg>
+          页面管理
+        </button>
+        <button class="settings-tab" data-settings-tab="proxy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+          </svg>
+          代理设置
+        </button>
+      </div>
+      <div class="test-result" id="testResult"></div>
       <div class="settings-body">
-        <div class="section-title">页面管理</div>
-        <div class="tab-toggle-list" id="tabToggleList"></div>
-
-        <div class="section-divider"></div>
-        <div class="section-title">代理设置</div>
-
-        <div class="toggle-group">
-          <span>启用代理</span>
-          <div class="toggle-switch" id="proxyToggle"></div>
+        <div class="settings-tab-content active" data-settings-content="pages">
+          <div class="tab-toggle-list" id="tabToggleList"></div>
         </div>
-
-        <div class="form-group">
-          <label class="form-label">代理服务器</label>
-          <input type="text" class="form-input" id="proxyServer" placeholder="http://127.0.0.1:7890">
-          <div class="form-hint">
-            支持格式：<br>
-            • HTTP: <code>http://127.0.0.1:7890</code><br>
-            • SOCKS5: <code>socks5://127.0.0.1:1080</code><br>
-            • SOCKS4: <code>socks4://127.0.0.1:1080</code><br>
-            ChatGPT、Grok、Gemini、Claude、Perplexity 使用代理
+        <div class="settings-tab-content" data-settings-content="proxy">
+          <div class="section-title">全局代理</div>
+          <div class="toggle-group">
+            <span>启用代理</span>
+            <div class="toggle-switch" id="proxyToggle"></div>
           </div>
-        </div>
-
-        <div class="test-result" id="testResult"></div>
-
-        <div class="btn-group">
-          <button class="btn btn-secondary" id="testProxyBtn">测试连接</button>
-          <button class="btn btn-primary" id="saveProxyBtn">保存设置</button>
-        </div>
-
-        <div class="section-divider" style="margin-top: 24px;"></div>
-        <div class="section-title">独立代理</div>
-        <div class="tab-proxy-subtitle">
-          为单个平台指定不同的代理服务器，留空则使用统一代理或直连
-        </div>
-        <div class="tab-proxy-list" id="tabProxyList"></div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="saveTabProxyBtn">保存独立代理</button>
+          <div class="form-group">
+            <label class="form-label">代理服务器</label>
+            <input type="text" class="form-input" id="proxyServer" placeholder="http://127.0.0.1:7890">
+            <div class="form-hint">
+              支持格式：<br>
+              • HTTP: <code>http://127.0.0.1:7890</code><br>
+              • SOCKS5: <code>socks5://127.0.0.1:1080</code><br>
+              ChatGPT、Grok、Gemini、Claude、Perplexity 使用代理
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-secondary" id="testProxyBtn">测试连接</button>
+            <button class="btn btn-primary" id="saveProxyBtn">保存设置</button>
+          </div>
+          <div class="section-divider" style="margin-top: 24px;"></div>
+          <div class="section-title">独立代理</div>
+          <div class="tab-proxy-subtitle">
+            为单个平台指定不同的代理服务器，留空则使用统一代理或直连
+          </div>
+          <div class="tab-proxy-list" id="tabProxyList"></div>
+          <div class="btn-group">
+            <button class="btn btn-primary" id="saveTabProxyBtn">保存独立代理</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1180,6 +1259,19 @@
       closeSettings.addEventListener('click', closeSettingsPanel);
       settingsOverlay.addEventListener('click', (e) => {
         if (e.target === settingsOverlay) closeSettingsPanel();
+      });
+
+      // 设置页标签切换
+      const settingsBody = document.querySelector('.settings-body');
+      document.querySelectorAll('.settings-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          const target = tab.dataset.settingsTab;
+          document.querySelector(`.settings-tab-content[data-settings-content="${target}"]`).classList.add('active');
+          settingsBody.scrollTop = 0;
+        });
       });
 
       proxyToggle.addEventListener('click', () => proxyToggle.classList.toggle('active'));
