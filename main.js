@@ -12,6 +12,61 @@ let mainWindow;
 let browserViews = {};
 let currentTab = 'yuanbao';
 let viewsHidden = false;
+let isAppQuitting = false;
+
+function isBrowserViewUsable(view) {
+  return !!(view && view.webContents && !view.webContents.isDestroyed());
+}
+
+function canManageBrowserViews() {
+  return !isAppQuitting && mainWindow && !mainWindow.isDestroyed();
+}
+
+function destroyBrowserViews() {
+  const windowRef = mainWindow;
+  try {
+    Object.values(browserViews).forEach(view => {
+      try {
+        if (windowRef && !windowRef.isDestroyed()) {
+          windowRef.removeBrowserView(view);
+        }
+      } catch (error) {
+        console.warn('Failed to remove BrowserView during shutdown:', error);
+      }
+      try {
+        if (isBrowserViewUsable(view)) {
+          view.webContents.close();
+        }
+      } catch (error) {
+        console.warn('Failed to close BrowserView webContents during shutdown:', error);
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to destroy BrowserViews:', error);
+  }
+  browserViews = {};
+}
+
+function discardBrowserView(tabName, view) {
+  if (browserViews[tabName] === view) {
+    delete browserViews[tabName];
+  }
+  const windowRef = mainWindow;
+  try {
+    if (windowRef && !windowRef.isDestroyed()) {
+      windowRef.removeBrowserView(view);
+    }
+  } catch (error) {
+    console.warn('Failed to remove discarded BrowserView:', error);
+  }
+  try {
+    if (isBrowserViewUsable(view)) {
+      view.webContents.close();
+    }
+  } catch (error) {
+    console.warn('Failed to close discarded BrowserView:', error);
+  }
+}
 
 // AI 模型配置
 // name: 显示名称  defaultEnabled: 首次运行时是否默认显示在侧边栏（用户可在设置中随时开启/关闭）
@@ -634,7 +689,7 @@ async function createBrowserView(tabName) {
       }
       // 延迟 1.5 秒后重试
       setTimeout(() => {
-        if (view.webContents && !view.webContents.isDestroyed()) {
+        if (isBrowserViewUsable(view)) {
           view.webContents.reload();
         }
       }, 1500);
@@ -718,21 +773,25 @@ async function createBrowserView(tabName) {
       };
     }
 
-    view.webContents.loadURL(url).catch(() => {});
+    view.webContents.loadURL(url).catch((error) => {
+      console.warn('Failed to load popup URL:', tabName, error);
+    });
     return { action: 'deny' };
   });
 
   if (tabName === 'grok') {
     view.webContents.on('did-create-window', (childWindow) => {
       childWindow.on('closed', () => {
-        if (!view.webContents.isDestroyed()) {
+        if (isBrowserViewUsable(view)) {
           view.webContents.reload();
         }
       });
     });
   }
 
-  view.webContents.loadURL(tabConfig.url);
+  view.webContents.loadURL(tabConfig.url).catch((error) => {
+    console.warn('Failed to load tab URL:', tabName, error);
+  });
 
   // 注入反检测脚本
   // Gemini 使用 Safari UA，需要使用专用脚本（伪装 Safari）
@@ -740,45 +799,45 @@ async function createBrowserView(tabName) {
   // 其他页面使用通用反检测脚本（伪装 Chrome）
   if (tabName === 'gemini') {
     view.webContents.on('did-finish-load', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectGeminiScript(view.webContents);
       }
     });
     view.webContents.on('did-navigate-in-page', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectGeminiScript(view.webContents);
       }
     });
   } else if (tabName === 'perplexity') {
     // Perplexity：注入最小化反检测脚本（伪造 userAgentData，不做激进指纹伪装）
     view.webContents.on('dom-ready', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectPerplexityScript(view.webContents);
       }
     });
     view.webContents.on('did-finish-load', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectPerplexityScript(view.webContents);
       }
     });
     view.webContents.on('did-navigate-in-page', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectPerplexityScript(view.webContents);
       }
     });
   } else if (!shouldSkipAntiDetection(tabName)) {
     view.webContents.on('dom-ready', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectAntiDetectionScript(view.webContents);
       }
     });
     view.webContents.on('did-finish-load', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectAntiDetectionScript(view.webContents);
       }
     });
     view.webContents.on('did-navigate-in-page', () => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         injectAntiDetectionScript(view.webContents);
       }
     });
@@ -789,7 +848,7 @@ async function createBrowserView(tabName) {
     view.webContents.on('render-process-gone', (event, details) => {
       if (details.reason === 'crashed' || details.reason === 'killed') {
         setTimeout(() => {
-          if (!view.webContents.isDestroyed()) {
+          if (isBrowserViewUsable(view)) {
             view.webContents.reload();
           }
         }, 1000);
@@ -799,6 +858,11 @@ async function createBrowserView(tabName) {
 
   // 右键菜单
   view.webContents.on('context-menu', (event, params) => {
+    const runIfUsable = (action) => {
+      if (!isBrowserViewUsable(view)) return;
+      action(view.webContents);
+    };
+
     const menuTemplate = [];
     const hasText = params.selectionText.trim().length > 0;
     const isEditable = params.isEditable;
@@ -833,7 +897,7 @@ async function createBrowserView(tabName) {
       if (menuTemplate.length > 0) menuTemplate.push({ type: 'separator' });
       menuTemplate.push({
         label: '复制图片',
-        click: () => view.webContents.copyImageAt(params.x, params.y)
+        click: () => runIfUsable(wc => wc.copyImageAt(params.x, params.y))
       });
       if (params.srcURL) {
         menuTemplate.push({
@@ -845,12 +909,13 @@ async function createBrowserView(tabName) {
 
     if (menuTemplate.length > 0) menuTemplate.push({ type: 'separator' });
     const wc = view.webContents;
+    const canUse = isBrowserViewUsable(view);
     menuTemplate.push(
-      { label: '后退', accelerator: 'CmdOrCtrl+[', enabled: wc.canGoBack(), click: () => wc.goBack() },
-      { label: '前进', accelerator: 'CmdOrCtrl+]', enabled: wc.canGoForward(), click: () => wc.goForward() },
+      { label: '后退', accelerator: 'CmdOrCtrl+[', enabled: canUse && wc.canGoBack(), click: () => runIfUsable(wc => wc.goBack()) },
+      { label: '前进', accelerator: 'CmdOrCtrl+]', enabled: canUse && wc.canGoForward(), click: () => runIfUsable(wc => wc.goForward()) },
       { type: 'separator' },
-      { label: '刷新页面', accelerator: 'CmdOrCtrl+R', click: () => wc.reload() },
-      { label: '检查元素', click: () => wc.openDevTools() }
+      { label: '刷新页面', accelerator: 'CmdOrCtrl+R', click: () => runIfUsable(wc => wc.reload()) },
+      { label: '检查元素', click: () => runIfUsable(wc => wc.openDevTools()) }
     );
 
     Menu.buildFromTemplate(menuTemplate).popup();
@@ -861,19 +926,19 @@ async function createBrowserView(tabName) {
 
 // 更新当前活跃 BrowserView 的大小
 function updateViewBounds() {
-  if (!mainWindow || viewsHidden) return;
+  if (!canManageBrowserViews() || viewsHidden) return;
 
   const [width, height] = mainWindow.getContentSize();
   const bounds = { x: 72, y: 0, width: width - 72, height: height };
 
-  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+  if (isBrowserViewUsable(browserViews[currentTab])) {
     browserViews[currentTab].setBounds(bounds);
   }
 }
 
 // 切换标签
 async function switchTab(tabName) {
-  if (!AI_TABS[tabName] || !mainWindow) return;
+  if (!AI_TABS[tabName] || !canManageBrowserViews()) return;
 
   currentTab = tabName;
 
@@ -882,17 +947,49 @@ async function switchTab(tabName) {
     mainWindow.webContents.send('set-active-tab', tabName);
   }
 
-  // 如果 view 不存在，创建它（新 view 会通过 did-start/stop-loading 自行管理加载状态）
-  const isNewView = !browserViews[tabName];
-  if (isNewView) {
-    browserViews[tabName] = await createBrowserView(tabName);
-    mainWindow.addBrowserView(browserViews[tabName]);
+  // 如果 view 不存在或已失效，创建新的 view
+  const staleView = browserViews[tabName];
+  if (staleView && !isBrowserViewUsable(staleView)) {
+    discardBrowserView(tabName, staleView);
   }
+
+  let isNewView = !isBrowserViewUsable(browserViews[tabName]);
+  if (isNewView) {
+    const view = await createBrowserView(tabName);
+    if (!canManageBrowserViews()) {
+      discardBrowserView(tabName, view);
+      return;
+    }
+    if (browserViews[tabName]) {
+      discardBrowserView(tabName, view);
+      return;
+    }
+    browserViews[tabName] = view;
+    mainWindow.addBrowserView(view);
+  }
+
+  if (!canManageBrowserViews()) return;
+
+  // 异步创建期间用户已切到其他标签：保留后台 view 但不干扰当前显示
+  if (currentTab !== tabName) {
+    if (isBrowserViewUsable(browserViews[tabName])) {
+      const [width, height] = mainWindow.getContentSize();
+      browserViews[tabName].setBounds({
+        x: -10000,
+        y: -10000,
+        width: Math.max(width - 72, 1),
+        height: Math.max(height, 1)
+      });
+    }
+    return;
+  }
+
+  if (!isBrowserViewUsable(browserViews[tabName])) return;
 
   // 仅对已存在且加载完成的 view 发送 loading: false
   // 新创建的 view 或仍在加载中的 view，由 did-stop-loading 事件自然触发隐藏
   if (!isNewView && mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-    if (!browserViews[tabName].webContents.isLoading()) {
+    if (isBrowserViewUsable(browserViews[tabName]) && !browserViews[tabName].webContents.isLoading()) {
       mainWindow.webContents.send('loading-status', { tab: tabName, loading: false });
     }
   }
@@ -908,14 +1005,14 @@ async function switchTab(tabName) {
     // 保持原始尺寸只改位置，避免视口缩放触发页面重连等网络操作
     const [curW, curH] = mainWindow.getContentSize();
     Object.values(browserViews).forEach(view => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         view.setBounds({ x: -10000, y: -10000, width: curW - 72, height: curH });
       }
     });
 
     const showNewView = () => {
-      if (currentTab !== tabName || viewsHidden || !mainWindow || mainWindow.isDestroyed()) return;
-      if (!browserViews[tabName] || browserViews[tabName].webContents.isDestroyed()) return;
+      if (currentTab !== tabName || viewsHidden || !canManageBrowserViews()) return;
+      if (!isBrowserViewUsable(browserViews[tabName])) return;
 
       const [width, height] = mainWindow.getContentSize();
       const bounds = { x: 72, y: 0, width: width - 72, height: height };
@@ -923,7 +1020,7 @@ async function switchTab(tabName) {
       // 恢复当前标签到可见区域，其他 view 保持在屏幕外（正常尺寸），避免透过顶层 view 看到底层内容
       browserViews[tabName].setBounds(bounds);
       Object.entries(browserViews).forEach(([name, view]) => {
-        if (name !== tabName && !view.webContents.isDestroyed()) {
+        if (name !== tabName && isBrowserViewUsable(view)) {
           view.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
         }
       });
@@ -935,7 +1032,7 @@ async function switchTab(tabName) {
     browserViews[tabName].webContents.once('did-stop-loading', showNewView);
     // 超时保底：最多等 10 秒，避免页面长时间无响应时卡在 loading
     setTimeout(() => {
-      if (browserViews[tabName] && !browserViews[tabName].webContents.isDestroyed()
+      if (isBrowserViewUsable(browserViews[tabName])
           && browserViews[tabName].getBounds().x < 0 && currentTab === tabName) {
         showNewView();
       }
@@ -949,7 +1046,7 @@ async function switchTab(tabName) {
     // 保持原始尺寸只改位置，避免视口缩放触发页面重连等网络操作
     browserViews[tabName].setBounds(bounds);
     Object.entries(browserViews).forEach(([name, view]) => {
-      if (name !== tabName && !view.webContents.isDestroyed()) {
+      if (name !== tabName && isBrowserViewUsable(view)) {
         view.setBounds({ x: -10000, y: -10000, width: bounds.width, height: bounds.height });
       }
     });
@@ -960,15 +1057,16 @@ async function switchTab(tabName) {
 
   // 非关键操作延后执行，不阻塞视图切换
   setImmediate(() => {
+    if (!canManageBrowserViews()) return;
     // 静音后台 View，取消静音当前 View
     Object.entries(browserViews).forEach(([name, view]) => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         view.webContents.setAudioMuted(name !== tabName);
       }
     });
 
     // 尝试聚焦到输入框（仅已加载的 view）
-    if (!isNewView && browserViews[tabName] && !browserViews[tabName].webContents.isDestroyed()) {
+    if (!isNewView && isBrowserViewUsable(browserViews[tabName])) {
       browserViews[tabName].webContents.executeJavaScript(`
         (function() {
           const selectors = [
@@ -993,6 +1091,7 @@ async function switchTab(tabName) {
 }
 
 function createWindow() {
+  isAppQuitting = false;
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -1025,9 +1124,15 @@ function createWindow() {
 
   mainWindow.on('resize', updateViewBounds);
 
+  mainWindow.on('close', () => {
+    if (isAppQuitting) return;
+    destroyBrowserViews();
+  });
+
   // 当主窗口获得焦点时，确保当前 BrowserView 也获得焦点
   mainWindow.on('focus', () => {
-    if (!viewsHidden && browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+    if (!canManageBrowserViews() || viewsHidden) return;
+    if (isBrowserViewUsable(browserViews[currentTab])) {
       browserViews[currentTab].webContents.focus();
     }
   });
@@ -1177,7 +1282,7 @@ app.whenReady().then(() => {
           label: '后退',
           accelerator: 'CmdOrCtrl+[',
           click: () => {
-            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+            if (isBrowserViewUsable(browserViews[currentTab])) {
               browserViews[currentTab].webContents.goBack();
             }
           }
@@ -1186,7 +1291,7 @@ app.whenReady().then(() => {
           label: '前进',
           accelerator: 'CmdOrCtrl+]',
           click: () => {
-            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+            if (isBrowserViewUsable(browserViews[currentTab])) {
               browserViews[currentTab].webContents.goForward();
             }
           }
@@ -1196,7 +1301,7 @@ app.whenReady().then(() => {
           label: '刷新当前页面',
           accelerator: 'CmdOrCtrl+R',
           click: () => {
-            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+            if (isBrowserViewUsable(browserViews[currentTab])) {
               browserViews[currentTab].webContents.reload();
             }
           }
@@ -1206,7 +1311,7 @@ app.whenReady().then(() => {
           label: '打开开发者工具',
           accelerator: 'CmdOrCtrl+Shift+I',
           click: () => {
-            if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+            if (isBrowserViewUsable(browserViews[currentTab])) {
               browserViews[currentTab].webContents.openDevTools();
             }
           }
@@ -1237,6 +1342,8 @@ app.on('window-all-closed', () => {
 
 // 退出前保存最后使用的标签页，下次启动时恢复
 app.on('before-quit', () => {
+  isAppQuitting = true;
+  destroyBrowserViews();
   try {
     const config = loadConfig();
     config.lastTab = currentTab;
@@ -1253,7 +1360,8 @@ ipcMain.on('switch-tab', (event, tabName) => {
 
 // IPC: 设置 BrowserView 焦点
 ipcMain.on('focus-view', () => {
-  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+  if (!canManageBrowserViews()) return;
+  if (isBrowserViewUsable(browserViews[currentTab])) {
     browserViews[currentTab].webContents.focus();
   }
 });
@@ -1262,10 +1370,10 @@ ipcMain.on('focus-view', () => {
 ipcMain.on('show-views', (event, show) => {
   viewsHidden = !show;
 
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!canManageBrowserViews()) return;
 
   if (show) {
-    if (!browserViews[currentTab]) {
+    if (!isBrowserViewUsable(browserViews[currentTab])) {
       switchTab(currentTab).catch(error => console.error('Failed to restore current tab:', error));
       return;
     }
@@ -1275,7 +1383,7 @@ ipcMain.on('show-views', (event, show) => {
     mainWindow.setTopBrowserView(browserViews[currentTab]);
   } else {
     Object.values(browserViews).forEach(view => {
-      if (!view.webContents.isDestroyed()) {
+      if (isBrowserViewUsable(view)) {
         view.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
       }
     });
@@ -1284,7 +1392,8 @@ ipcMain.on('show-views', (event, show) => {
 
 // IPC: 刷新当前页面
 ipcMain.on('refresh-tab', () => {
-  if (browserViews[currentTab] && !browserViews[currentTab].webContents.isDestroyed()) {
+  if (!canManageBrowserViews()) return;
+  if (isBrowserViewUsable(browserViews[currentTab])) {
     browserViews[currentTab].webContents.reload();
   }
 });
@@ -1323,7 +1432,7 @@ ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
 
   Object.entries(browserViews).forEach(([tabName, view]) => {
     if (config.tabProxy[tabName]) return;
-    if (AI_TABS[tabName] && AI_TABS[tabName].useProxy && view.webContents && !view.webContents.isDestroyed()) {
+    if (AI_TABS[tabName] && AI_TABS[tabName].useProxy && isBrowserViewUsable(view)) {
       view.webContents.reload();
     }
   });
@@ -1357,7 +1466,7 @@ ipcMain.handle('set-tab-proxy-config', async (event, tabProxy) => {
 
   affectedTabs.forEach(tabName => {
     const view = browserViews[tabName];
-    if (view && view.webContents && !view.webContents.isDestroyed()) {
+    if (isBrowserViewUsable(view)) {
       view.webContents.reload();
     }
   });
@@ -1411,14 +1520,16 @@ ipcMain.handle('clear-site-data', async (event, tabId) => {
     if (browserViews[tabId]) {
       const view = browserViews[tabId];
       delete browserViews[tabId];
-      if (mainWindow && !mainWindow.isDestroyed()) {
+      if (canManageBrowserViews()) {
         mainWindow.removeBrowserView(view);
       }
       try {
-        if (view.webContents && !view.webContents.isDestroyed()) {
+        if (isBrowserViewUsable(view)) {
           view.webContents.close();
         }
-      } catch (_) {}
+      } catch (error) {
+        console.warn('Failed to close BrowserView during clear-site-data:', error);
+      }
     }
 
     return { success: true };
