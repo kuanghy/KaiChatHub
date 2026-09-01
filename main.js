@@ -1,6 +1,20 @@
 const { app, BrowserWindow, BrowserView, ipcMain, session, shell, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const {
+  normalizeProxyConfig,
+  normalizeTabProxyConfig,
+  getEffectiveProxy,
+  normalizeEnabledTabs,
+  writeConfigAtomic
+} = require('./lib/config');
+const {
+  isPermissionAllowed,
+  resolveNavigationAction,
+  shouldShowNewViewImmediately,
+  shouldUseHiddenTitleBar,
+  darwinHideMenuRoles
+} = require('./lib/policy');
 
 // 必须在 app ready 之前设置
 if (app && app.commandLine) {
@@ -13,6 +27,17 @@ let browserViews = {};
 let currentTab = 'yuanbao';
 let viewsHidden = false;
 let isAppQuitting = false;
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 function isBrowserViewUsable(view) {
   return !!(view && view.webContents && !view.webContents.isDestroyed());
@@ -117,44 +142,12 @@ function loadConfig() {
   return { proxy: normalizeProxyConfig(), tabProxy: {} };
 }
 
-// 保存配置
 function saveConfig(config) {
-  try {
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  } catch (error) {
-    console.error('Failed to save config:', error);
+  const saved = writeConfigAtomic(configPath, config);
+  if (!saved) {
+    console.error('Failed to save config');
   }
-}
-
-function normalizeProxyConfig(proxyConfig = {}) {
-  const server = typeof proxyConfig.server === 'string' ? proxyConfig.server.trim() : '';
-  const bypass = typeof proxyConfig.bypass === 'string' ? proxyConfig.bypass.trim() : '';
-  return {
-    enabled: !!(proxyConfig.enabled && server),
-    server,
-    bypass
-  };
-}
-
-function normalizeTabProxyConfig(tabProxy) {
-  if (!tabProxy || typeof tabProxy !== 'object') return {};
-  const result = {};
-  for (const [tabId, server] of Object.entries(tabProxy)) {
-    if (typeof server === 'string' && server.trim()) {
-      result[tabId] = server.trim();
-    }
-  }
-  return result;
-}
-
-// 计算某 tab 的实际代理：独立代理 > 统一代理 > 直连
-function getEffectiveProxy(tabName, useProxy, globalProxy, tabProxy) {
-  const perTab = tabProxy && typeof tabProxy[tabName] === 'string'
-    ? tabProxy[tabName].trim()
-    : '';
-  if (perTab) return { enabled: true, server: perTab };
-  if (useProxy) return globalProxy;
-  return { enabled: false, server: '' };
+  return saved;
 }
 
 async function applyProxyToSession(ses, effectiveProxy) {
@@ -244,11 +237,11 @@ async function setupSession(ses, tabName, effectiveProxy) {
     });
   }
 
-  ses.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(true);
+  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(isPermissionAllowed(permission));
   });
 
-  ses.setPermissionCheckHandler(() => true);
+  ses.setPermissionCheckHandler((_webContents, permission) => isPermissionAllowed(permission));
 
   await applyProxyToSession(ses, effectiveProxy);
 
@@ -617,13 +610,19 @@ function injectPerplexityScript(webContents) {
   webContents.executeJavaScript(script).catch(() => {});
 }
 
-function urlMatchesHost(rawUrl, hosts) {
-  try {
-    const { hostname } = new URL(rawUrl);
-    return hosts.some(host => hostname === host || hostname.endsWith(`.${host}`));
-  } catch (_) {
-    return false;
-  }
+function openExternalUrl(url) {
+  shell.openExternal(url).catch((error) => {
+    console.warn('Failed to open external URL:', error);
+  });
+}
+
+function decideViewNavigation(tabName, tabConfig, url, kind) {
+  return resolveNavigationAction(url, {
+    tabUrl: tabConfig.url,
+    tabName,
+    grokAuthHosts: GROK_AUTH_HOSTS,
+    kind
+  });
 }
 
 // 创建 BrowserView
@@ -750,7 +749,8 @@ async function createBrowserView(tabName) {
   // 处理新窗口：默认在当前页面内打开，配合前进/后退按钮使用
   // Grok 登录例外：站内/认证域名需要保留在应用内子窗口，并共享 persist:grok 会话，否则授权结果无法回到当前页
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (tabName === 'grok' && urlMatchesHost(url, GROK_AUTH_HOSTS)) {
+    const decision = decideViewNavigation(tabName, tabConfig, url, 'window-open');
+    if (decision.action === 'popup') {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -772,11 +772,23 @@ async function createBrowserView(tabName) {
         }
       };
     }
-
-    view.webContents.loadURL(url).catch((error) => {
-      console.warn('Failed to load popup URL:', tabName, error);
-    });
+    if (decision.action === 'load') {
+      view.webContents.loadURL(url).catch((error) => {
+        console.warn('Failed to load popup URL:', tabName, error);
+      });
+    } else if (decision.action === 'external') {
+      openExternalUrl(url);
+    }
     return { action: 'deny' };
+  });
+
+  view.webContents.on('will-navigate', (event, url) => {
+    const decision = decideViewNavigation(tabName, tabConfig, url, 'navigate');
+    if (decision.action === 'load') return;
+    event.preventDefault();
+    if (decision.action === 'external') {
+      openExternalUrl(url);
+    }
   });
 
   if (tabName === 'grok') {
@@ -1029,7 +1041,17 @@ async function switchTab(tabName) {
       browserViews[tabName].webContents.focus();
     };
 
-    browserViews[tabName].webContents.once('did-stop-loading', showNewView);
+    let shown = false;
+    const showOnce = () => {
+      if (shown) return;
+      shown = true;
+      showNewView();
+    };
+
+    browserViews[tabName].webContents.once('did-stop-loading', showOnce);
+    if (shouldShowNewViewImmediately(browserViews[tabName].webContents.isLoading())) {
+      showOnce();
+    }
     // 超时保底：最多等 10 秒，避免页面长时间无响应时卡在 loading
     setTimeout(() => {
       if (isBrowserViewUsable(browserViews[tabName])
@@ -1092,7 +1114,7 @@ async function switchTab(tabName) {
 
 function createWindow() {
   isAppQuitting = false;
-  mainWindow = new BrowserWindow({
+  const windowOptions = {
     width: 1400,
     height: 900,
     minWidth: 1000,
@@ -1103,11 +1125,14 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     },
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 15, y: 15 },
     backgroundColor: '#0f0f14',
     show: false
-  });
+  };
+  if (shouldUseHiddenTitleBar(process.platform)) {
+    windowOptions.titleBarStyle = 'hiddenInset';
+    windowOptions.trafficLightPosition = { x: 15, y: 15 };
+  }
+  mainWindow = new BrowserWindow(windowOptions);
 
   mainWindow.loadFile('sidebar.html');
 
@@ -1246,6 +1271,24 @@ function showAboutWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
+
+  const hideRoles = darwinHideMenuRoles(process.platform);
+  const appMenuExtras = hideRoles.length
+    ? [
+        { type: 'separator' },
+        ...hideRoles.map((role) => {
+          const labels = {
+            hide: '隐藏 KaiChatHub',
+            hideOthers: '隐藏其他',
+            unhide: '显示全部'
+          };
+          return { role, label: labels[role] };
+        }),
+        { type: 'separator' }
+      ]
+    : [{ type: 'separator' }];
+
   // 创建应用菜单（用于注册全局快捷键）
   const template = [
     {
@@ -1255,12 +1298,12 @@ app.whenReady().then(() => {
           label: '关于 KaiChatHub',
           click: () => showAboutWindow()
         },
-        { type: 'separator' },
-        { role: 'hide', label: '隐藏 KaiChatHub' },
-        { role: 'hideOthers', label: '隐藏其他' },
-        { role: 'unhide', label: '显示全部' },
-        { type: 'separator' },
-        { role: 'quit', label: '退出 KaiChatHub' }
+        ...appMenuExtras,
+        {
+          role: 'quit',
+          label: '退出 KaiChatHub',
+          accelerator: 'CmdOrCtrl+Q'
+        }
       ]
     },
     {
@@ -1328,6 +1371,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
+    if (!isPrimaryInstance) return;
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
@@ -1381,6 +1425,7 @@ ipcMain.on('show-views', (event, show) => {
     const bounds = { x: 72, y: 0, width: width - 72, height: height };
     browserViews[currentTab].setBounds(bounds);
     mainWindow.setTopBrowserView(browserViews[currentTab]);
+    browserViews[currentTab].webContents.focus();
   } else {
     Object.values(browserViews).forEach(view => {
       if (isBrowserViewUsable(view)) {
@@ -1417,7 +1462,9 @@ ipcMain.handle('get-proxy-config', () => {
 ipcMain.handle('set-proxy-config', async (event, proxyConfig) => {
   const config = loadConfig();
   config.proxy = normalizeProxyConfig(proxyConfig);
-  saveConfig(config);
+  if (!saveConfig(config)) {
+    return { success: false, message: 'Failed to save config' };
+  }
 
   // 有独立代理的 tab 不受统一代理变更影响
   await Promise.all(
@@ -1445,7 +1492,9 @@ ipcMain.handle('set-tab-proxy-config', async (event, tabProxy) => {
   const config = loadConfig();
   const oldTabProxy = config.tabProxy || {};
   config.tabProxy = normalizeTabProxyConfig(tabProxy);
-  saveConfig(config);
+  if (!saveConfig(config)) {
+    return { success: false, message: 'Failed to save config' };
+  }
 
   // 仅对代理配置实际发生变化的 tab 重新应用并刷新
   const affectedTabs = [];
@@ -1496,10 +1545,16 @@ ipcMain.handle('get-tab-config', () => {
 
 // IPC: 设置启用的标签页
 ipcMain.handle('set-enabled-tabs', async (event, enabledTabs) => {
+  const normalized = normalizeEnabledTabs(Object.keys(AI_TABS), enabledTabs);
+  if (!normalized.ok) {
+    return { success: false, message: normalized.message };
+  }
   const config = loadConfig();
-  config.enabledTabs = enabledTabs;
+  config.enabledTabs = normalized.enabledTabs;
   delete config.knownTabs; // 清理历史遗留字段
-  saveConfig(config);
+  if (!saveConfig(config)) {
+    return { success: false, message: 'Failed to save config' };
+  }
   return { success: true };
 });
 

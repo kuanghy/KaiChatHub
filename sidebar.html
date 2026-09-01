@@ -4,6 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KaiChatHub</title>
+  <script>
+    if (window.electronAPI && window.electronAPI.platform === 'darwin') {
+      document.documentElement.classList.add('is-darwin');
+    }
+  </script>
   <style>
     * {
       margin: 0;
@@ -51,11 +56,15 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 60px 0 20px;
+      padding: 20px 0 20px;
       -webkit-app-region: drag;
       position: fixed;
       left: 0;
       top: 0;
+    }
+
+    html.is-darwin .sidebar {
+      padding: 60px 0 20px;
     }
 
     .nav-items {
@@ -1161,7 +1170,13 @@
 
             // 立即保存配置
             if (window.electronAPI) {
-              window.electronAPI.setEnabledTabs(enabledTabs);
+              window.electronAPI.setEnabledTabs(enabledTabs).then((result) => {
+                if (result && result.success === false) {
+                  showResult(false, result.message || '保存失败');
+                }
+              }).catch((err) => {
+                showResult(false, '保存失败: ' + err.message);
+              });
             }
           });
 
@@ -1317,7 +1332,11 @@
         // 禁用按钮防止重复点击
         saveProxyBtn.disabled = true;
         try {
-          await window.electronAPI.setProxyConfig(config);
+          const result = await window.electronAPI.setProxyConfig(config);
+          if (!result || result.success === false) {
+            showResult(false, (result && result.message) || '保存失败');
+            return;
+          }
           const hasAnyProxy = config.enabled || Object.keys(tabProxyConfig).length > 0;
           proxyIndicator.classList.toggle('active', hasAnyProxy);
           showResult(true, '已保存');
@@ -1407,7 +1426,11 @@
         });
         saveTabProxyBtn.disabled = true;
         try {
-          await window.electronAPI.setTabProxyConfig(newTabProxy);
+          const result = await window.electronAPI.setTabProxyConfig(newTabProxy);
+          if (!result || result.success === false) {
+            showResult(false, (result && result.message) || '保存失败');
+            return;
+          }
           tabProxyConfig = newTabProxy;
           const globalEnabled = proxyToggle.classList.contains('active');
           const hasAnyProxy = globalEnabled || Object.keys(tabProxyConfig).length > 0;

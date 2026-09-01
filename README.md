@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.7.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.7.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/electron-33.0.0-brightgreen.svg" alt="Electron">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -52,8 +52,8 @@
 
 前往 [Releases](../../releases) 页面下载对应平台的安装包：
 
-- **macOS**: `KaiChatHub-x.x.x-arm64.dmg` (Apple Silicon) 
-- **Windows**: `KaiChatHub-x.x.x.exe`
+- **macOS**: `KaiChatHub-x.x.x-arm64.dmg` (Apple Silicon)
+- **Windows**: `KaiChatHub-Setup-x.x.x-x64-win.exe`
 - **Linux**: `KaiChatHub-x.x.x.AppImage`
 
 ### 从源码运行
@@ -114,7 +114,11 @@ npm run build:linux
 
 | 快捷键 | 功能 |
 |--------|------|
+| `Cmd/Ctrl + [` | 后退 |
+| `Cmd/Ctrl + ]` | 前进 |
 | `Cmd/Ctrl + R` | 刷新当前页面 |
+| `Cmd/Ctrl + Shift + I` | 打开开发者工具 |
+| `Cmd/Ctrl + Q` | 退出应用 |
 | `Escape` | 关闭设置面板 |
 
 ## 代理设置

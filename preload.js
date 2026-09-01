@@ -38,5 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearSiteData: (tabId) => ipcRenderer.invoke('clear-site-data', tabId),
 
   // 监听设置活跃标签（用于启动时恢复上次使用的标签）
-  onSetActiveTab: (callback) => ipcRenderer.on('set-active-tab', (event, tabName) => callback(tabName))
+  onSetActiveTab: (callback) => ipcRenderer.on('set-active-tab', (event, tabName) => callback(tabName)),
+
+  platform: process.platform
 });
