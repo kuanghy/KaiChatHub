@@ -13,7 +13,9 @@ const {
   resolveNavigationAction,
   shouldShowNewViewImmediately,
   shouldUseHiddenTitleBar,
-  darwinHideMenuRoles
+  darwinHideMenuRoles,
+  shouldReloadAfterRenderGone,
+  formatLoadFailureMessage
 } = require('./lib/policy');
 
 // 必须在 app ready 之前设置
@@ -699,27 +701,11 @@ async function createBrowserView(tabName) {
     retryCount = 0;
 
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed() && errorCode !== -3) {
-      // 常见错误码转换为友好提示（仅对使用代理的页面显示详细信息）
-      if (usesProxy) {
-        const errorMessages = {
-          '-2': '网络连接失败',
-          '-7': '连接超时',
-          '-21': '网络变化导致连接中断',
-          '-100': '连接被关闭',
-          '-101': '连接被重置',
-          '-102': '连接被拒绝',
-          '-105': 'DNS 解析失败',
-          '-106': '无网络连接',
-          '-118': '连接超时',
-          '-130': '代理连接失败',
-          '-137': 'SSL 协议错误',
-          '-138': '代理验证失败'
-        };
-        const errorMsg = errorMessages[String(errorCode)] || errorDescription;
-        mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: `${errorMsg} (${errorCode})` });
-      } else {
-        mainWindow.webContents.send('loading-status', { tab: tabName, loading: false, error: errorDescription });
-      }
+      mainWindow.webContents.send('loading-status', {
+        tab: tabName,
+        loading: false,
+        error: formatLoadFailureMessage(errorCode, errorDescription)
+      });
     }
   });
 
@@ -855,18 +841,15 @@ async function createBrowserView(tabName) {
     });
   }
 
-  // 千问专用：渲染进程崩溃时自动恢复，避免永久黑屏
-  if (tabName === 'qwen') {
-    view.webContents.on('render-process-gone', (event, details) => {
-      if (details.reason === 'crashed' || details.reason === 'killed') {
-        setTimeout(() => {
-          if (isBrowserViewUsable(view)) {
-            view.webContents.reload();
-          }
-        }, 1000);
+  // 渲染进程崩溃时自动恢复，避免永久黑屏
+  view.webContents.on('render-process-gone', (event, details) => {
+    if (!shouldReloadAfterRenderGone(details.reason)) return;
+    setTimeout(() => {
+      if (isBrowserViewUsable(view)) {
+        view.webContents.reload();
       }
-    });
-  }
+    }, 1000);
+  });
 
   // 右键菜单
   view.webContents.on('context-menu', (event, params) => {

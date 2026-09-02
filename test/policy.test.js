@@ -6,7 +6,9 @@ const {
   shouldShowNewViewImmediately,
   getSidebarPaddingTop,
   shouldUseHiddenTitleBar,
-  darwinHideMenuRoles
+  darwinHideMenuRoles,
+  shouldReloadAfterRenderGone,
+  formatLoadFailureMessage
 } = require('../lib/policy');
 
 const GROK_AUTH_HOSTS = [
@@ -96,5 +98,29 @@ describe('platform chrome', () => {
     assert.equal(shouldUseHiddenTitleBar('linux'), false);
     assert.deepEqual(darwinHideMenuRoles('darwin'), ['hide', 'hideOthers', 'unhide']);
     assert.deepEqual(darwinHideMenuRoles('win32'), []);
+  });
+});
+
+describe('shouldReloadAfterRenderGone', () => {
+  it('reloads after crash or kill on any tab', () => {
+    assert.equal(shouldReloadAfterRenderGone('crashed'), true);
+    assert.equal(shouldReloadAfterRenderGone('killed'), true);
+  });
+
+  it('does not reload on clean or unknown exits', () => {
+    assert.equal(shouldReloadAfterRenderGone('clean-exit'), false);
+    assert.equal(shouldReloadAfterRenderGone('oom'), false);
+    assert.equal(shouldReloadAfterRenderGone(''), false);
+  });
+});
+
+describe('formatLoadFailureMessage', () => {
+  it('uses the same Chinese mapping for every tab', () => {
+    assert.equal(formatLoadFailureMessage(-106, 'net::ERR_INTERNET_DISCONNECTED'), '无网络连接 (-106)');
+    assert.equal(formatLoadFailureMessage(-130, 'net::ERR_PROXY_CONNECTION_FAILED'), '代理连接失败 (-130)');
+  });
+
+  it('falls back to the Chromium description for unknown codes', () => {
+    assert.equal(formatLoadFailureMessage(-3, 'net::ERR_ABORTED'), 'net::ERR_ABORTED (-3)');
   });
 });
