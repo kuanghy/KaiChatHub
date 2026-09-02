@@ -70,8 +70,17 @@
     .nav-items {
       display: flex;
       flex-direction: column;
+      align-items: center;
       gap: 8px;
+      width: 100%;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: none;
       -webkit-app-region: no-drag;
+    }
+
+    .nav-items::-webkit-scrollbar {
+      display: none;
     }
 
     .nav-item {
@@ -82,11 +91,12 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: var(--transition);
+      transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
       background: transparent;
       border: none;
       outline: none;
+      flex-shrink: 0;
     }
 
     .nav-item::before {
@@ -97,7 +107,7 @@
       height: 0;
       background: currentColor;
       border-radius: 0 2px 2px 0;
-      transition: var(--transition);
+      transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .nav-item:hover {
@@ -206,6 +216,7 @@
       flex-direction: column;
       align-items: center;
       gap: 12px;
+      flex-shrink: 0;
       -webkit-app-region: no-drag;
     }
 
@@ -228,7 +239,6 @@
     .settings-btn:hover {
       background: var(--bg-tertiary);
       color: var(--accent-settings);
-      transform: rotate(30deg);
     }
 
     .settings-btn svg {
@@ -305,6 +315,26 @@
     .loading-text {
       font-size: 14px;
       color: var(--text-secondary);
+    }
+
+    .loading-retry {
+      display: none;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+    }
+
+    .loading-indicator.is-error .loading-spinner {
+      display: none;
+    }
+
+    .loading-indicator.is-error .loading-retry {
+      display: inline-flex;
     }
 
     /* 设置面板 */
@@ -939,7 +969,10 @@
   <div class="loading-indicator" id="loadingIndicator">
     <div class="loading-spinner"></div>
     <div class="loading-text" id="loadingText">正在加载...</div>
+    <button type="button" class="loading-retry" id="loadingRetryBtn">重试</button>
   </div>
+
+  <script src="lib/loading-overlay.js"></script>
 
   <!-- 设置面板 -->
   <div class="settings-overlay" id="settingsOverlay">
@@ -1032,6 +1065,7 @@
       const saveTabProxyBtn = document.getElementById('saveTabProxyBtn');
       const loadingIndicator = document.getElementById('loadingIndicator');
       const loadingText = document.getElementById('loadingText');
+      const loadingRetryBtn = document.getElementById('loadingRetryBtn');
 
       let currentTab = 'yuanbao';
       let enabledTabs = [];
@@ -1042,6 +1076,29 @@
       // 标签名称：从主进程配置动态加载，消除与 main.js 中 AI_TABS 的硬编码重复
       // 加载前使用 HTML nav-item 的 title 属性作为备用
       let tabNames = {};
+      let overlayKind = 'idle';
+
+      function applyLoadingOverlay(data) {
+        if (typeof getLoadingOverlayState !== 'function') return;
+        const state = getLoadingOverlayState({
+          tab: data.tab,
+          currentTab,
+          loading: data.loading,
+          error: data.error,
+          tabLabel: getTabName(data.tab),
+          currentKind: overlayKind
+        });
+        if (!state.apply) return;
+        overlayKind = state.kind;
+        if (state.text) loadingText.textContent = state.text;
+        loadingIndicator.classList.toggle('show', !!state.visible);
+        loadingIndicator.classList.toggle('is-error', state.kind === 'error');
+      }
+
+      loadingRetryBtn.addEventListener('click', () => {
+        applyLoadingOverlay({ tab: currentTab, loading: true });
+        if (window.electronAPI) window.electronAPI.refreshTab();
+      });
 
       function getTabName(tabId) {
         if (tabNames[tabId]) return tabNames[tabId];
@@ -1213,20 +1270,7 @@
       // 监听加载状态
       if (window.electronAPI && window.electronAPI.onLoadingStatus) {
         window.electronAPI.onLoadingStatus((data) => {
-          if (data.tab === currentTab) {
-            if (data.loading) {
-              loadingText.textContent = `正在加载 ${getTabName(data.tab)}...`;
-              loadingIndicator.classList.add('show');
-            } else {
-              loadingIndicator.classList.remove('show');
-              if (data.error) {
-                loadingText.textContent = `加载失败: ${data.error}`;
-                loadingIndicator.classList.add('show');
-                // 延长错误显示时间，方便用户查看具体错误
-                setTimeout(() => loadingIndicator.classList.remove('show'), 5000);
-              }
-            }
-          }
+          applyLoadingOverlay(data);
         });
       }
 
@@ -1250,8 +1294,7 @@
           item.classList.add('active');
 
           currentTab = item.dataset.tab;
-          loadingText.textContent = `正在加载 ${getTabName(currentTab)}...`;
-          loadingIndicator.classList.add('show');
+          applyLoadingOverlay({ tab: currentTab, loading: true });
 
           if (window.electronAPI) {
             window.electronAPI.switchTab(currentTab);

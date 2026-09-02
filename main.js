@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const {
   normalizeProxyConfig,
+  normalizeProxyConfigForProbe,
   normalizeTabProxyConfig,
   getEffectiveProxy,
   normalizeEnabledTabs,
@@ -15,7 +16,10 @@ const {
   shouldUseHiddenTitleBar,
   darwinHideMenuRoles,
   shouldReloadAfterRenderGone,
-  formatLoadFailureMessage
+  formatLoadFailureMessage,
+  formatRenderGoneFailureMessage,
+  shouldKeepViewOffscreen,
+  shouldHideViewOnFailLoad
 } = require('./lib/policy');
 
 // 必须在 app ready 之前设置
@@ -28,6 +32,8 @@ let mainWindow;
 let browserViews = {};
 let currentTab = 'yuanbao';
 let viewsHidden = false;
+let errorHidesView = false;
+const renderGoneReloadsByTab = Object.create(null);
 let isAppQuitting = false;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
@@ -72,6 +78,9 @@ function destroyBrowserViews() {
     console.warn('Failed to destroy BrowserViews:', error);
   }
   browserViews = {};
+  for (const tabName of Object.keys(renderGoneReloadsByTab)) {
+    delete renderGoneReloadsByTab[tabName];
+  }
 }
 
 function discardBrowserView(tabName, view) {
@@ -93,6 +102,48 @@ function discardBrowserView(tabName, view) {
   } catch (error) {
     console.warn('Failed to close discarded BrowserView:', error);
   }
+}
+
+function reloadTab(tabName) {
+  if (!isBrowserViewUsable(browserViews[tabName])) return;
+  renderGoneReloadsByTab[tabName] = 0;
+  browserViews[tabName].webContents.reload();
+}
+
+function reloadCurrentTab() {
+  if (!canManageBrowserViews()) return;
+  reloadTab(currentTab);
+}
+
+function getContentViewSize() {
+  const [width, height] = mainWindow.getContentSize();
+  return { width: Math.max(width - 72, 1), height: Math.max(height, 1) };
+}
+
+function placeViewOffscreen(view) {
+  if (!isBrowserViewUsable(view) || !mainWindow || mainWindow.isDestroyed()) return;
+  const { width, height } = getContentViewSize();
+  view.setBounds({ x: -10000, y: -10000, width, height });
+}
+
+function placeCurrentView(options = {}) {
+  if (!canManageBrowserViews()) return;
+  const view = browserViews[currentTab];
+  if (!isBrowserViewUsable(view)) return;
+  if (shouldKeepViewOffscreen(viewsHidden, errorHidesView)) {
+    placeViewOffscreen(view);
+    return;
+  }
+  const { width, height } = getContentViewSize();
+  view.setBounds({ x: 72, y: 0, width, height });
+  mainWindow.setTopBrowserView(view);
+  if (options.focus) view.webContents.focus();
+}
+
+function hideCurrentViewForError(tabName) {
+  if (tabName !== currentTab) return;
+  errorHidesView = true;
+  if (!viewsHidden) placeViewOffscreen(browserViews[currentTab]);
 }
 
 // AI 模型配置
@@ -629,6 +680,7 @@ function decideViewNavigation(tabName, tabConfig, url, kind) {
 
 // 创建 BrowserView
 async function createBrowserView(tabName) {
+  renderGoneReloadsByTab[tabName] = 0;
   const tabConfig = AI_TABS[tabName];
   const ses = session.fromPartition(tabConfig.partition);
 
@@ -682,8 +734,13 @@ async function createBrowserView(tabName) {
 
     // 网络相关错误码，对使用代理的页面尝试自动重连
     const retryableErrors = [-2, -7, -21, -100, -101, -102, -105, -106, -118, -130, -137];
+    const willAutoRetry = usesProxy && retryableErrors.includes(errorCode) && retryCount < maxRetries;
 
-    if (usesProxy && retryableErrors.includes(errorCode) && retryCount < maxRetries) {
+    if (shouldHideViewOnFailLoad({ isMainFrame, errorCode, willAutoRetry })) {
+      hideCurrentViewForError(tabName);
+    }
+
+    if (willAutoRetry) {
       retryCount++;
       if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send('loading-status', { tab: tabName, loading: true, error: null });
@@ -709,9 +766,14 @@ async function createBrowserView(tabName) {
     }
   });
 
-  // 加载成功时重置重试计数
+  // 加载成功时重置网络重试与崩溃自愈计数
   view.webContents.on('did-finish-load', () => {
     retryCount = 0;
+    renderGoneReloadsByTab[tabName] = 0;
+    if (tabName === currentTab) {
+      errorHidesView = false;
+      placeCurrentView();
+    }
   });
 
   // 千问专用：阻止 passport iframe 中的 AWSC/Baxia 安全 SDK 脚本加载
@@ -841,9 +903,23 @@ async function createBrowserView(tabName) {
     });
   }
 
-  // 渲染进程崩溃时自动恢复，避免永久黑屏
+  // 渲染进程崩溃时自动恢复，避免永久黑屏；连续崩溃超过上限后提示手动刷新
   view.webContents.on('render-process-gone', (event, details) => {
-    if (!shouldReloadAfterRenderGone(details.reason)) return;
+    if (details.reason !== 'crashed' && details.reason !== 'killed') return;
+    const consecutiveReloads = renderGoneReloadsByTab[tabName] || 0;
+    if (!shouldReloadAfterRenderGone(details.reason, consecutiveReloads)) {
+      if (mainWindow && !mainWindow.isDestroyed()
+          && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('loading-status', {
+          tab: tabName,
+          loading: false,
+          error: formatRenderGoneFailureMessage()
+        });
+        hideCurrentViewForError(tabName);
+      }
+      return;
+    }
+    renderGoneReloadsByTab[tabName] = consecutiveReloads + 1;
     setTimeout(() => {
       if (isBrowserViewUsable(view)) {
         view.webContents.reload();
@@ -909,7 +985,7 @@ async function createBrowserView(tabName) {
       { label: '后退', accelerator: 'CmdOrCtrl+[', enabled: canUse && wc.canGoBack(), click: () => runIfUsable(wc => wc.goBack()) },
       { label: '前进', accelerator: 'CmdOrCtrl+]', enabled: canUse && wc.canGoForward(), click: () => runIfUsable(wc => wc.goForward()) },
       { type: 'separator' },
-      { label: '刷新页面', accelerator: 'CmdOrCtrl+R', click: () => runIfUsable(wc => wc.reload()) },
+      { label: '刷新页面', accelerator: 'CmdOrCtrl+R', click: () => reloadTab(tabName) },
       { label: '检查元素', click: () => runIfUsable(wc => wc.openDevTools()) }
     );
 
@@ -921,20 +997,15 @@ async function createBrowserView(tabName) {
 
 // 更新当前活跃 BrowserView 的大小
 function updateViewBounds() {
-  if (!canManageBrowserViews() || viewsHidden) return;
-
-  const [width, height] = mainWindow.getContentSize();
-  const bounds = { x: 72, y: 0, width: width - 72, height: height };
-
-  if (isBrowserViewUsable(browserViews[currentTab])) {
-    browserViews[currentTab].setBounds(bounds);
-  }
+  if (!canManageBrowserViews()) return;
+  placeCurrentView();
 }
 
 // 切换标签
 async function switchTab(tabName) {
   if (!AI_TABS[tabName] || !canManageBrowserViews()) return;
 
+  errorHidesView = false;
   currentTab = tabName;
 
   // 通知侧边栏同步活跃标签状态（用于启动时恢复上次使用的标签）
@@ -1006,8 +1077,12 @@ async function switchTab(tabName) {
     });
 
     const showNewView = () => {
-      if (currentTab !== tabName || viewsHidden || !canManageBrowserViews()) return;
+      if (currentTab !== tabName || !canManageBrowserViews()) return;
       if (!isBrowserViewUsable(browserViews[tabName])) return;
+      if (shouldKeepViewOffscreen(viewsHidden, errorHidesView)) {
+        placeViewOffscreen(browserViews[tabName]);
+        return;
+      }
 
       const [width, height] = mainWindow.getContentSize();
       const bounds = { x: 72, y: 0, width: width - 72, height: height };
@@ -1326,11 +1401,7 @@ app.whenReady().then(() => {
         {
           label: '刷新当前页面',
           accelerator: 'CmdOrCtrl+R',
-          click: () => {
-            if (isBrowserViewUsable(browserViews[currentTab])) {
-              browserViews[currentTab].webContents.reload();
-            }
-          }
+          click: () => reloadCurrentTab()
         },
         { type: 'separator' },
         {
@@ -1404,11 +1475,7 @@ ipcMain.on('show-views', (event, show) => {
       switchTab(currentTab).catch(error => console.error('Failed to restore current tab:', error));
       return;
     }
-    const [width, height] = mainWindow.getContentSize();
-    const bounds = { x: 72, y: 0, width: width - 72, height: height };
-    browserViews[currentTab].setBounds(bounds);
-    mainWindow.setTopBrowserView(browserViews[currentTab]);
-    browserViews[currentTab].webContents.focus();
+    placeCurrentView({ focus: true });
   } else {
     Object.values(browserViews).forEach(view => {
       if (isBrowserViewUsable(view)) {
@@ -1420,10 +1487,7 @@ ipcMain.on('show-views', (event, show) => {
 
 // IPC: 刷新当前页面
 ipcMain.on('refresh-tab', () => {
-  if (!canManageBrowserViews()) return;
-  if (isBrowserViewUsable(browserViews[currentTab])) {
-    browserViews[currentTab].webContents.reload();
-  }
+  reloadCurrentTab();
 });
 
 // IPC: 获取代理配置（含独立代理和 tab useProxy 信息）
@@ -1580,7 +1644,7 @@ ipcMain.handle('clear-site-data', async (event, tabId) => {
 // IPC: 测试代理
 ipcMain.handle('test-proxy', async (event, proxyConfig) => {
   try {
-    const normalizedProxy = normalizeProxyConfig(proxyConfig);
+    const normalizedProxy = normalizeProxyConfigForProbe(proxyConfig);
     const testSession = session.fromPartition('test-proxy');
     await applyProxyToSession(testSession, normalizedProxy);
 

@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   normalizeProxyConfig,
+  normalizeProxyConfigForProbe,
   normalizeTabProxyConfig,
   getEffectiveProxy,
   normalizeEnabledTabs,
@@ -17,6 +18,19 @@ describe('normalizeProxyConfig', () => {
       normalizeProxyConfig({ enabled: true, server: '  ' }),
       { enabled: false, server: '', bypass: '' }
     );
+  });
+});
+
+describe('normalizeProxyConfigForProbe', () => {
+  it('probes with the filled server even when the toggle is off', () => {
+    assert.deepEqual(
+      normalizeProxyConfigForProbe({ enabled: false, server: ' http://127.0.0.1:7890 ' }),
+      { enabled: true, server: 'http://127.0.0.1:7890', bypass: '' }
+    );
+  });
+
+  it('does not enable a probe without a server', () => {
+    assert.equal(normalizeProxyConfigForProbe({ enabled: true, server: '' }).enabled, false);
   });
 });
 

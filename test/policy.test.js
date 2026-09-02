@@ -8,7 +8,11 @@ const {
   shouldUseHiddenTitleBar,
   darwinHideMenuRoles,
   shouldReloadAfterRenderGone,
-  formatLoadFailureMessage
+  formatLoadFailureMessage,
+  formatRenderGoneFailureMessage,
+  getLoadingOverlayState,
+  shouldKeepViewOffscreen,
+  shouldHideViewOnFailLoad
 } = require('../lib/policy');
 
 const GROK_AUTH_HOSTS = [
@@ -112,6 +116,11 @@ describe('shouldReloadAfterRenderGone', () => {
     assert.equal(shouldReloadAfterRenderGone('oom'), false);
     assert.equal(shouldReloadAfterRenderGone(''), false);
   });
+
+  it('stops auto-reload after three consecutive crashes', () => {
+    assert.equal(shouldReloadAfterRenderGone('crashed', 2), true);
+    assert.equal(shouldReloadAfterRenderGone('killed', 3), false);
+  });
 });
 
 describe('formatLoadFailureMessage', () => {
@@ -122,5 +131,109 @@ describe('formatLoadFailureMessage', () => {
 
   it('falls back to the Chromium description for unknown codes', () => {
     assert.equal(formatLoadFailureMessage(-3, 'net::ERR_ABORTED'), 'net::ERR_ABORTED (-3)');
+  });
+});
+
+describe('getLoadingOverlayState', () => {
+  it('keeps a load error visible with retry and does not auto-hide', () => {
+    assert.deepEqual(
+      getLoadingOverlayState({
+        tab: 'chatgpt',
+        currentTab: 'chatgpt',
+        loading: false,
+        error: '无网络连接 (-106)'
+      }),
+      {
+        apply: true,
+        visible: true,
+        kind: 'error',
+        retry: true,
+        persist: true,
+        text: '加载失败: 无网络连接 (-106)'
+      }
+    );
+  });
+
+  it('ignores status from a background tab', () => {
+    assert.deepEqual(
+      getLoadingOverlayState({
+        tab: 'chatgpt',
+        currentTab: 'yuanbao',
+        loading: false,
+        error: '连接超时'
+      }),
+      { apply: false }
+    );
+  });
+
+  it('shows loading and hides retry when a new load starts', () => {
+    const state = getLoadingOverlayState({
+      tab: 'chatgpt',
+      currentTab: 'chatgpt',
+      loading: true,
+      tabLabel: 'ChatGPT'
+    });
+    assert.equal(state.visible, true);
+    assert.equal(state.kind, 'loading');
+    assert.equal(state.retry, false);
+    assert.equal(state.persist, false);
+    assert.equal(state.text, '正在加载 ChatGPT...');
+  });
+
+  it('hides the overlay when loading finishes without error', () => {
+    assert.deepEqual(
+      getLoadingOverlayState({ tab: 'chatgpt', currentTab: 'chatgpt', loading: false }),
+      { apply: true, visible: false, kind: 'idle', retry: false, persist: false }
+    );
+  });
+
+  it('keeps a persisted error when a later idle event arrives', () => {
+    const state = getLoadingOverlayState({
+      tab: 'chatgpt',
+      currentTab: 'chatgpt',
+      loading: false,
+      currentKind: 'error'
+    });
+    assert.equal(state.apply, true);
+    assert.equal(state.visible, true);
+    assert.equal(state.kind, 'error');
+    assert.equal(state.retry, true);
+    assert.equal(state.persist, true);
+  });
+
+  it('clears a persisted error when a new load starts', () => {
+    const state = getLoadingOverlayState({
+      tab: 'chatgpt',
+      currentTab: 'chatgpt',
+      loading: true,
+      currentKind: 'error',
+      tabLabel: 'ChatGPT'
+    });
+    assert.equal(state.kind, 'loading');
+    assert.equal(state.retry, false);
+  });
+});
+
+describe('shouldKeepViewOffscreen', () => {
+  it('keeps the view offscreen while settings or an error overlay needs the content area', () => {
+    assert.equal(shouldKeepViewOffscreen(false, false), false);
+    assert.equal(shouldKeepViewOffscreen(true, false), true);
+    assert.equal(shouldKeepViewOffscreen(false, true), true);
+    assert.equal(shouldKeepViewOffscreen(true, true), true);
+  });
+});
+
+describe('shouldHideViewOnFailLoad', () => {
+  it('hides the view during proxy auto-retry so Chromium error pages cannot flash', () => {
+    assert.equal(shouldHideViewOnFailLoad({ isMainFrame: true, errorCode: -106, willAutoRetry: true }), true);
+  });
+
+  it('hides the view on a final main-frame failure', () => {
+    assert.equal(shouldHideViewOnFailLoad({ isMainFrame: true, errorCode: -106, willAutoRetry: false }), true);
+  });
+
+  it('does not hide on aborted loads or subframe failures', () => {
+    assert.equal(shouldHideViewOnFailLoad({ isMainFrame: true, errorCode: -3, willAutoRetry: false }), false);
+    assert.equal(shouldHideViewOnFailLoad({ isMainFrame: false, errorCode: -106, willAutoRetry: false }), false);
   });
 });
