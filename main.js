@@ -6,7 +6,7 @@ const {
   normalizeProxyConfigForProbe,
   normalizeTabProxyConfig,
   getEffectiveProxy,
-  normalizeEnabledTabs,
+  normalizeTabState,
   writeConfigAtomic
 } = require('./lib/config');
 const {
@@ -149,19 +149,27 @@ function hideCurrentViewForError(tabName) {
 // AI 模型配置
 // name: 显示名称  defaultEnabled: 首次运行时是否默认显示在侧边栏（用户可在设置中随时开启/关闭）
 const AI_TABS = {
-  yuanbao: { name: '腾讯元宝', url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao', useProxy: false, defaultEnabled: true },
-  yiyan: { name: '文心一言', url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan', useProxy: false, defaultEnabled: true },
   doubao: { name: '字节豆包', url: 'https://www.doubao.com/', partition: 'persist:doubao', useProxy: false, defaultEnabled: true },
-  deepseek: { name: '深度求索', url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false, defaultEnabled: true },
-  kimi: { name: 'Kimi', url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false, defaultEnabled: true },
+  yuanbao: { name: '腾讯元宝', url: 'https://yuanbao.tencent.com/', partition: 'persist:yuanbao', useProxy: false, defaultEnabled: true },
   qwen: { name: '通义千问', url: 'https://www.qianwen.com/', partition: 'persist:qwen', useProxy: false, defaultEnabled: true },
   chatglm: { name: '智谱清言', url: 'https://chatglm.cn/', partition: 'persist:chatglm', useProxy: false, defaultEnabled: false },
+  deepseek: { name: '深度求索', url: 'https://chat.deepseek.com/', partition: 'persist:deepseek', useProxy: false, defaultEnabled: true },
+  kimi: { name: 'Kimi', url: 'https://www.kimi.com/', partition: 'persist:kimi', useProxy: false, defaultEnabled: true },
+  yiyan: { name: '文心一言', url: 'https://yiyan.baidu.com/', partition: 'persist:yiyan', useProxy: false, defaultEnabled: true },
   chatgpt: { name: 'ChatGPT', url: 'https://chatgpt.com/', partition: 'persist:chatgpt', useProxy: true, defaultEnabled: false },
   gemini: { name: 'Gemini', url: 'https://gemini.google.com/', partition: 'persist:gemini', useProxy: true, defaultEnabled: false },
   claude: { name: 'Claude', url: 'https://claude.ai/', partition: 'persist:claude', useProxy: true, defaultEnabled: false },
   grok: { name: 'Grok', url: 'https://grok.com/', partition: 'persist:grok', useProxy: true, defaultEnabled: false },
   perplexity: { name: 'Perplexity', url: 'https://www.perplexity.ai/', partition: 'persist:perplexity', useProxy: true, defaultEnabled: false }
 };
+
+function getNormalizedTabState(config, options) {
+  const allTabs = Object.entries(AI_TABS).map(([id, tab]) => ({
+    id,
+    defaultEnabled: tab.defaultEnabled
+  }));
+  return normalizeTabState(allTabs, config, options);
+}
 
 // 配置文件路径
 const configPath = path.join(app.getPath('userData'), 'config.json');
@@ -1198,10 +1206,11 @@ function createWindow() {
     mainWindow.show();
     // 根据配置确定默认标签（优先恢复上次使用的标签，否则使用第一个启用的标签）
     const config = loadConfig();
-    const allTabIds = Object.keys(AI_TABS);
-    const enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
+    const tabState = getNormalizedTabState(config);
     const lastTab = config.lastTab;
-    const defaultTab = (lastTab && enabledTabs.includes(lastTab)) ? lastTab : (allTabIds.find(id => enabledTabs.includes(id)) || allTabIds[0]);
+    const defaultTab = (lastTab && tabState.enabledTabs.includes(lastTab))
+      ? lastTab
+      : tabState.tabOrder.find(id => tabState.enabledTabs.includes(id));
     switchTab(defaultTab).catch(error => console.error('Failed to switch default tab:', error));
   });
 
@@ -1570,33 +1579,27 @@ ipcMain.handle('set-tab-proxy-config', async (event, tabProxy) => {
   return { success: true };
 });
 
-// IPC: 获取标签页配置（名称列表 + 启用状态）
+// IPC: 获取标签页配置（名称列表 + 顺序 + 启用状态）
 ipcMain.handle('get-tab-config', () => {
   const config = loadConfig();
   const allTabIds = Object.keys(AI_TABS);
-  let enabledTabs = Array.isArray(config.enabledTabs) ? config.enabledTabs : null;
-
-  if (!enabledTabs) {
-    // 首次运行：根据各标签的 defaultEnabled 配置决定是否默认显示
-    enabledTabs = allTabIds.filter(id => AI_TABS[id].defaultEnabled !== false);
-  } else {
-    // 已有配置：完全尊重用户选择，仅过滤掉代码中已移除的标签
-    enabledTabs = enabledTabs.filter(id => allTabIds.includes(id));
-  }
+  const tabState = getNormalizedTabState(config);
 
   return {
     allTabs: allTabIds.map(id => ({ id, name: AI_TABS[id].name || id })),
-    enabledTabs
+    tabOrder: tabState.tabOrder,
+    enabledTabs: tabState.enabledTabs
   };
 });
 
-// IPC: 设置启用的标签页
-ipcMain.handle('set-enabled-tabs', async (event, enabledTabs) => {
-  const normalized = normalizeEnabledTabs(Object.keys(AI_TABS), enabledTabs);
+// IPC: 原子保存标签顺序和启用状态
+ipcMain.handle('set-tab-state', async (event, tabState) => {
+  const normalized = getNormalizedTabState(tabState, { forWrite: true });
   if (!normalized.ok) {
     return { success: false, message: normalized.message };
   }
   const config = loadConfig();
+  config.tabOrder = normalized.tabOrder;
   config.enabledTabs = normalized.enabledTabs;
   delete config.knownTabs; // 清理历史遗留字段
   if (!saveConfig(config)) {

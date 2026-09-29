@@ -28,11 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 设置 BrowserView 焦点
   focusView: () => ipcRenderer.send('focus-view'),
 
-  // 获取标签页配置（全部标签 + 启用列表）
+  // 获取标签页配置（全部标签 + 顺序 + 启用列表）
   getTabConfig: () => ipcRenderer.invoke('get-tab-config'),
 
-  // 设置启用的标签页
-  setEnabledTabs: (tabs) => ipcRenderer.invoke('set-enabled-tabs', tabs),
+  // 原子保存标签顺序和启用状态
+  setTabState: (state) => ipcRenderer.invoke('set-tab-state', state),
 
   // 清除指定平台的数据（Cookie、缓存等）
   clearSiteData: (tabId) => ipcRenderer.invoke('clear-site-data', tabId),
