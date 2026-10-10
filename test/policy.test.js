@@ -1,8 +1,10 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  disabledBlinkFeatures,
   isPermissionAllowed,
   resolveNavigationAction,
+  suppressDockBadge,
   shouldShowNewViewImmediately,
   getSidebarPaddingTop,
   shouldUseHiddenTitleBar,
@@ -23,6 +25,33 @@ const GROK_AUTH_HOSTS = [
   'accounts.google.com',
   'appleid.apple.com'
 ];
+
+describe('disabledBlinkFeatures', () => {
+  it('disables the Badging API while keeping automation concealment', () => {
+    assert.deepEqual(disabledBlinkFeatures(), ['AutomationControlled', 'Badging']);
+  });
+});
+
+describe('suppressDockBadge', () => {
+  it('clears a dock badge set by an embedded page', () => {
+    const calls = [];
+    suppressDockBadge({
+      getBadge: () => '4',
+      setBadge: (label) => calls.push(label)
+    });
+    assert.deepEqual(calls, ['']);
+  });
+
+  it('leaves the dock alone when no badge is showing', () => {
+    let calls = 0;
+    suppressDockBadge({
+      getBadge: () => '',
+      setBadge: () => { calls += 1; }
+    });
+    suppressDockBadge(null);
+    assert.equal(calls, 0);
+  });
+});
 
 describe('isPermissionAllowed', () => {
   it('rejects geolocation and device permissions', () => {

@@ -10,7 +10,9 @@ const {
   writeConfigAtomic
 } = require('./lib/config');
 const {
+  disabledBlinkFeatures,
   isPermissionAllowed,
+  suppressDockBadge,
   resolveNavigationAction,
   shouldShowNewViewImmediately,
   shouldUseHiddenTitleBar,
@@ -25,7 +27,7 @@ const {
 // 必须在 app ready 之前设置
 if (app && app.commandLine) {
   // 禁用自动化控制标识，避免被网站检测为自动化浏览器
-  app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+  app.commandLine.appendSwitch('disable-blink-features', disabledBlinkFeatures().join(','));
 }
 
 let mainWindow;
@@ -35,6 +37,7 @@ let viewsHidden = false;
 let errorHidesView = false;
 const renderGoneReloadsByTab = Object.create(null);
 let isAppQuitting = false;
+let dockBadgeTimer = null;
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
   app.quit();
@@ -113,6 +116,20 @@ function reloadTab(tabName) {
 function reloadCurrentTab() {
   if (!canManageBrowserViews()) return;
   reloadTab(currentTab);
+}
+
+// Badging API 没有事件可拦截，定时清掉网页写上的 Dock 角标
+function startDockBadgeSuppression() {
+  if (!app.dock) return;
+  const tick = () => suppressDockBadge(app.dock);
+  tick();
+  dockBadgeTimer = setInterval(tick, 200);
+}
+
+function stopDockBadgeSuppression() {
+  if (!dockBadgeTimer) return;
+  clearInterval(dockBadgeTimer);
+  dockBadgeTimer = null;
 }
 
 function getContentViewSize() {
@@ -1339,6 +1356,7 @@ function showAboutWindow() {
 
 app.whenReady().then(() => {
   if (!isPrimaryInstance) return;
+  startDockBadgeSuppression();
 
   const hideRoles = darwinHideMenuRoles(process.platform);
   const appMenuExtras = hideRoles.length
@@ -1450,6 +1468,7 @@ app.on('window-all-closed', () => {
 // 退出前保存最后使用的标签页，下次启动时恢复
 app.on('before-quit', () => {
   isAppQuitting = true;
+  stopDockBadgeSuppression();
   destroyBrowserViews();
   try {
     const config = loadConfig();
