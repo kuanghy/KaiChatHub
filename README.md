@@ -27,11 +27,12 @@
 | 5 | 🌙 **月之暗面 Kimi** | https://www.kimi.com/ | ❌ |
 | 6 | 🟣 **通义千问** | https://www.qianwen.com/ | ❌ |
 | 7 | 🔶 **智谱清言** | https://chatglm.cn/ | ❌ |
-| 8 | 🌿 **ChatGPT** | https://chatgpt.com/ | ✅ |
-| 9 | ✨ **Google Gemini** | https://gemini.google.com/ | ✅ |
-| 10 | 🧡 **Anthropic Claude** | https://claude.ai/ | ✅ |
-| 11 | 🟪 **xAI Grok** | https://grok.com/ | ✅ |
-| 12 | 🌀 **Perplexity** | https://www.perplexity.ai/ | ✅ |
+| 8 | 💜 **蚂蚁阿福** | https://chat.antafu.com/ | ❌ |
+| 9 | 🌿 **ChatGPT** | https://chatgpt.com/ | ✅ |
+| 10 | ✨ **Google Gemini** | https://gemini.google.com/ | ✅ |
+| 11 | 🧡 **Anthropic Claude** | https://claude.ai/ | ✅ |
+| 12 | 🟪 **xAI Grok** | https://grok.com/ | ✅ |
+| 13 | 🌀 **Perplexity** | https://www.perplexity.ai/ | ✅ |
 
 ## 特性
 
