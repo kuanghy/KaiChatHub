@@ -17,13 +17,16 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^26.17.0"
   },
   "build": {
     "appId": "com.kaichathub.app",
     "productName": "KaiChatHub",
     "directories": {
       "output": "dist"
+    },
+    "toolsets": {
+      "nsis": "1.2.1"
     },
     "mac": {
       "category": "public.app-category.productivity",
